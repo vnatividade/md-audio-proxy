@@ -12,6 +12,7 @@ Auth do usuário: token via form/header/arg OU cookie de dispositivo (md_auth).
 """
 import os
 import io
+import json
 import time
 import uuid
 import threading
@@ -38,6 +39,8 @@ COOKIE_NAME = "md_auth"
 COOKIE_MAXAGE = int(os.environ.get("COOKIE_MAXAGE", str(365 * 24 * 3600)))  # 1 ano
 
 ALLOWED_VOICES = {"pm_santa", "pm_alex", "pf_dora"}
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 _jobs = {}            # id -> dict
 _lock = threading.Lock()
@@ -218,6 +221,63 @@ def health():
     return {"ok": True, "worker_online": worker_online, "pending": pending}
 
 
+# ------------------------------- PWA --------------------------------------
+_MANIFEST = {
+    "name": "Meus Áudios",
+    "short_name": "Meus Áudios",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#14110E",
+    "theme_color": "#14110E",
+    "icons": [
+        {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    ],
+}
+
+_SW_JS = """
+const C = 'mdaudio-v1';
+self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  e.respondWith(
+    fetch(req).then(res => {
+      if (req.mode === 'navigate') { const cp = res.clone(); caches.open(C).then(c => c.put('/', cp)); }
+      return res;
+    }).catch(() => caches.match(req).then(m => m || caches.match('/')))
+  );
+});
+"""
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return Response(json.dumps(_MANIFEST), mimetype="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    return Response(_SW_JS, mimetype="application/javascript")
+
+
+@app.get("/icon-192.png")
+def icon_192():
+    return send_file(os.path.join(HERE, "icon-192.png"))
+
+
+@app.get("/icon-512.png")
+def icon_512():
+    return send_file(os.path.join(HERE, "icon-512.png"))
+
+
+@app.get("/apple-touch-icon.png")
+def apple_icon():
+    return send_file(os.path.join(HERE, "apple-touch-icon.png"))
+
+
 @app.get("/")
 def index():
     return Response(INDEX_HTML, mimetype="text/html")
@@ -227,62 +287,96 @@ INDEX_HTML = """<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MD → Áudio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Meus Áudios</title>
+<meta name="theme-color" content="#14110E">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Meus Áudios">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('mdaudio_theme')||'auto';}catch(e){document.documentElement.dataset.theme='auto';}</script>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --bg:#14110E; --card:#1E1A15; --border:#33291F; --text:#EFE7DA; --muted:#A79B88;
+    --field:#100D09; --btn2:#2E2820; --accent:#E8A33D; --accent-ink:#1A1206;
+    --err:#ff6b6b; --ok:#8FD19E; --pin:#F2C15A;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg:#F5EFE4; --card:#FFFFFF; --border:#E6DBC8; --text:#2A2320; --muted:#6B6152;
+    --field:#FBF7EF; --btn2:#EEE4D3; --accent:#B4741A; --accent-ink:#FFFFFF;
+    --err:#c0392b; --ok:#2F8F4E; --pin:#B8860B;
+  }
+  @media (prefers-color-scheme: light) {
+    :root[data-theme="auto"] {
+      color-scheme: light;
+      --bg:#F5EFE4; --card:#FFFFFF; --border:#E6DBC8; --text:#2A2320; --muted:#6B6152;
+      --field:#FBF7EF; --btn2:#EEE4D3; --accent:#B4741A; --accent-ink:#FFFFFF;
+      --err:#c0392b; --ok:#2F8F4E; --pin:#B8860B;
+    }
+  }
   * { box-sizing: border-box; }
   body { margin:0; font-family:-apple-system,system-ui,sans-serif;
-    background:#0e0f13; color:#e8e8ea; display:flex; min-height:100vh;
-    align-items:flex-start; justify-content:center; padding:24px; }
-  .card { width:100%; max-width:440px; background:#16181f; border:1px solid #262a35;
+    background:var(--bg); color:var(--text); display:flex; min-height:100vh;
+    align-items:flex-start; justify-content:center; padding:24px;
+    transition:background .2s ease, color .2s ease; }
+  .card { width:100%; max-width:440px; background:var(--card); border:1px solid var(--border);
     border-radius:18px; padding:28px; margin-top:16px; }
   h1 { font-size:22px; margin:0 0 4px; }
-  p.sub { margin:0 0 22px; color:#9aa0ae; font-size:14px; }
-  label { display:block; font-size:13px; color:#c3c8d4; margin:16px 0 6px; }
+  p.sub { margin:0 0 16px; color:var(--muted); font-size:14px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:16px 0 6px; }
   input[type=text], input[type=password], input[type=file], select { width:100%; padding:12px;
-    background:#0e0f13; border:1px solid #2c313d; border-radius:10px;
-    color:#e8e8ea; font-size:15px; }
-  input[type=range] { width:100%; accent-color:#5b8cff; margin-top:4px; }
-  .rangeval { color:#5b8cff; font-weight:600; }
+    background:var(--field); border:1px solid var(--border); border-radius:10px;
+    color:var(--text); font-size:15px; }
+  input[type=range] { width:100%; accent-color:var(--accent); margin-top:4px; }
+  .rangeval { color:var(--accent); font-weight:600; }
   button { width:100%; margin-top:22px; padding:14px; border:0; border-radius:12px;
-    background:#5b8cff; color:#fff; font-size:16px; font-weight:600; cursor:pointer; }
+    background:var(--accent); color:var(--accent-ink); font-size:16px; font-weight:600; cursor:pointer; }
   button:disabled { opacity:.55; cursor:default; }
   .trow { display:flex; gap:8px; }
   .trow input { flex:1 1 auto; }
-  .paste { width:auto; margin:0; padding:0 16px; background:#2c313d; color:#e8e8ea;
+  .paste { width:auto; margin:0; padding:0 16px; background:var(--btn2); color:var(--text);
     font-size:14px; font-weight:500; border-radius:10px; flex:0 0 auto; }
+  .settings { display:flex; align-items:center; gap:10px; margin:0 0 8px; }
+  .seg { display:inline-flex; background:var(--field); border:1px solid var(--border);
+    border-radius:10px; overflow:hidden; }
+  .seg button { width:auto; margin:0; padding:7px 13px; background:transparent; color:var(--muted);
+    font-size:13px; font-weight:600; border-radius:0; }
+  .seg button.on { background:var(--accent); color:var(--accent-ink); }
   .status { margin-top:18px; font-size:14px; min-height:24px; display:flex;
-    align-items:center; gap:9px; color:#c3c8d4; }
-  .spinner { width:18px; height:18px; border:3px solid #2c313d;
-    border-top-color:#5b8cff; border-radius:50%; animation:spin .8s linear infinite;
+    align-items:center; gap:9px; color:var(--muted); }
+  .spinner { width:18px; height:18px; border:3px solid var(--border);
+    border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite;
     flex:0 0 auto; display:none; }
   .spinner.on { display:inline-block; }
   @keyframes spin { to { transform:rotate(360deg); } }
-  .status.err { color:#ff6b6b; }
-  .conn { margin:2px 0 4px; font-size:13px; color:#7fd18c; display:none; }
-  .conn a { color:#9aa0ae; margin-left:8px; }
+  .status.err { color:var(--err); }
+  .conn { margin:2px 0 4px; font-size:13px; color:var(--ok); display:none; }
+  .conn a { color:var(--muted); margin-left:8px; }
   .hidden { display:none !important; }
   audio { width:100%; margin-top:18px; }
   .pctl { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center; }
-  .pbtn { width:auto; margin:0; padding:9px 14px; background:#2c313d; color:#e8e8ea;
+  .pbtn { width:auto; margin:0; padding:9px 14px; background:var(--btn2); color:var(--text);
     font-size:14px; font-weight:600; border-radius:10px; }
   .pbtn.save { margin-left:auto; }
   .hist { margin-top:26px; }
-  .hist h2 { font-size:14px; color:#9aa0ae; margin:0 0 10px; font-weight:600; }
+  .hist h2 { font-size:14px; color:var(--muted); margin:0 0 10px; font-weight:600; }
   .hitem { display:flex; align-items:center; gap:10px; padding:10px 12px;
-    background:#0e0f13; border:1px solid #232838; border-radius:12px; margin-bottom:8px; }
+    background:var(--field); border:1px solid var(--border); border-radius:12px; margin-bottom:8px; }
   .hinfo { flex:1 1 auto; min-width:0; }
-  .hname { font-size:14px; color:#e8e8ea; white-space:nowrap; overflow:hidden;
+  .hname { font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden;
     text-overflow:ellipsis; }
-  .hdate { font-size:12px; color:#7b8291; margin-top:2px; }
+  .hdate { font-size:12px; color:var(--muted); margin-top:2px; }
   .hbtns { display:flex; gap:5px; flex:0 0 auto; }
-  .hbtn { width:32px; margin:0; padding:8px 0; background:#20242f; font-size:14px; }
-  .hbtn.del { background:transparent; color:#7b8291; }
-  .hbtn.on { color:#ffcf5c; }
+  .hbtn { width:32px; margin:0; padding:8px 0; background:var(--btn2); color:var(--text); font-size:14px; }
+  .hbtn.del { background:transparent; color:var(--muted); }
+  .hbtn.on { color:var(--pin); }
   #histsearch { margin-bottom:12px; }
-  .renameinp { width:100%; padding:6px 8px; background:#0e0f13; border:1px solid #3a4152;
-    border-radius:8px; color:#e8e8ea; font-size:14px; }
+  .renameinp { width:100%; padding:6px 8px; background:var(--field); border:1px solid var(--border);
+    border-radius:8px; color:var(--text); font-size:14px; }
 </style>
 </head>
 <body>
@@ -291,6 +385,13 @@ INDEX_HTML = """<!doctype html>
     <p class="sub">Suba um arquivo .md e ouça em PT-BR.<br>
       Dica: escreva <b>pausa de 5 segundos</b> (ou <b>pausa de 1 minuto</b>) no texto pra inserir silêncio.<br>
       O áudio é gerado no servidor pessoal (Mac Studio).</p>
+    <div class="settings">
+      <div class="seg" id="themeseg">
+        <button type="button" data-theme="auto">Auto</button>
+        <button type="button" data-theme="light">Claro</button>
+        <button type="button" data-theme="dark">Escuro</button>
+      </div>
+    </div>
     <div class="conn" id="conn">🔓 Conectado neste aparelho<a href="#" id="forget">trocar token</a></div>
     <form id="f">
       <div id="tokenwrap">
@@ -369,6 +470,17 @@ function savePrefs(){
   try { localStorage.setItem('mdaudio_prefs', JSON.stringify({ voice: voiceEl.value, speed: speedEl.value })); } catch(e){}
 }
 speedEl.addEventListener('input', () => { speedValEl.textContent = fmtSpeed(parseFloat(speedEl.value)); });
+
+const themeSeg = document.getElementById('themeseg');
+function applyTheme(t){
+  if (!['auto','light','dark'].includes(t)) t = 'auto';
+  document.documentElement.dataset.theme = t;
+  [...themeSeg.children].forEach(b => b.classList.toggle('on', b.dataset.theme === t));
+  try { localStorage.setItem('mdaudio_theme', t); } catch(e){}
+  const tc = document.querySelector('meta[name="theme-color"]');
+  if (tc) requestAnimationFrame(() => tc.setAttribute('content', getComputedStyle(document.body).backgroundColor));
+}
+themeSeg.addEventListener('click', e => { const b = e.target.closest('button'); if (b) applyTheme(b.dataset.theme); });
 function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function sanitize(s){ return ((s||'audio').replace(/[\\\\/:*?"<>|]+/g,'_').trim() || 'audio').slice(0,80); }
 function relDate(ts){
@@ -644,8 +756,11 @@ document.getElementById('forget').addEventListener('click', async (e) => {
     try { const t = localStorage.getItem(TOK_KEY); if (t) tokenEl.value = t; } catch(e){}
   }
 
+  applyTheme(document.documentElement.dataset.theme || 'auto');
   loadPrefs();
   renderHistory();
+
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
 
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(JOB_KEY) || 'null'); } catch(e){}
