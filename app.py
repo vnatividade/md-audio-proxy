@@ -227,6 +227,10 @@ INDEX_HTML = """<!doctype html>
   button { width:100%; margin-top:22px; padding:14px; border:0; border-radius:12px;
     background:#5b8cff; color:#fff; font-size:16px; font-weight:600; cursor:pointer; }
   button:disabled { opacity:.55; cursor:default; }
+  .trow { display:flex; gap:8px; }
+  .trow input { flex:1 1 auto; }
+  .paste { width:auto; margin:0; padding:0 16px; background:#2c313d; color:#e8e8ea;
+    font-size:14px; font-weight:500; border-radius:10px; flex:0 0 auto; }
   .status { margin-top:18px; font-size:14px; min-height:24px; display:flex;
     align-items:center; gap:9px; color:#c3c8d4; }
   .spinner { width:18px; height:18px; border:3px solid #2c313d;
@@ -252,7 +256,10 @@ INDEX_HTML = """<!doctype html>
     <form id="f">
       <div id="tokenwrap">
         <label for="token">Token de acesso</label>
-        <input type="password" id="token" name="token" autocomplete="current-password">
+        <div class="trow">
+          <input type="password" id="token" name="token" autocomplete="current-password">
+          <button type="button" id="paste" class="paste">Colar</button>
+        </div>
       </div>
       <label for="file">Arquivo Markdown (.md)</label>
       <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain" required>
@@ -350,6 +357,16 @@ f.addEventListener('submit', async (e) => {
   } catch (err) {
     setStatus('Falha: ' + err, { err:true });
     setBusy(false);
+  }
+});
+
+document.getElementById('paste').addEventListener('click', async () => {
+  try {
+    const t = ((await navigator.clipboard.readText()) || '').trim();
+    if (t) { tokenEl.value = t; setStatus('Token colado.'); }
+    else setStatus('Área de transferência vazia.', { err:true });
+  } catch (e) {
+    setStatus('Não consegui colar automaticamente — cole manualmente no campo.', { err:true });
   }
 });
 
