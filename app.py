@@ -381,7 +381,7 @@ INDEX_HTML = """<!doctype html>
 </head>
 <body>
   <div class="card">
-    <h1>MD → Áudio</h1>
+    <h1>Meus Áudios</h1>
     <p class="sub">Suba um arquivo .md e ouça em PT-BR.<br>
       Dica: escreva <b>pausa de 5 segundos</b> (ou <b>pausa de 1 minuto</b>) no texto pra inserir silêncio.<br>
       O áudio é gerado no servidor pessoal (Mac Studio).</p>
