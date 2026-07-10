@@ -18,8 +18,15 @@ import uuid
 import threading
 
 from flask import Flask, request, send_file, abort, jsonify, Response
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
+
+
+@app.errorhandler(HTTPException)
+def _json_error(e):
+    # respostas de erro em JSON limpo (nada de página HTML crua no front)
+    return jsonify({"error": e.description, "code": e.code}), e.code
 
 APP_TOKEN = os.environ.get("APP_TOKEN", "")           # token do usuário (navegador)
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")     # token do canal Railway<->Mac
@@ -307,7 +314,7 @@ function showTokenField(show){
   if (show) tokenEl.setAttribute('required',''); else tokenEl.removeAttribute('required');
 }
 
-async function poll(job_id, token){
+async function poll(job_id, token, isResume){
   setBusy(true);
   while (true) {
     let rr;
@@ -337,9 +344,13 @@ async function poll(job_id, token){
         : 'Gerando o áudio no Mac Studio…', { loading:true });
       await sleep(1500); continue;
     }
-    let t = ''; try { t = await rr.text(); } catch(e){}
-    setStatus('Erro ' + rr.status + ': ' + t.slice(0,160), { err:true });
     try { localStorage.removeItem(JOB_KEY); } catch(e){}
+    // job retomado que já sumiu (sessão anterior): limpa em silêncio
+    if (rr.status === 404 && isResume) { setStatus(''); setBusy(false); return; }
+    let msg = 'Erro ' + rr.status;
+    try { const j = await rr.json(); if (j && j.error) msg = j.error; } catch(e){}
+    if (rr.status === 404) msg = 'Este pedido expirou. Envie o arquivo de novo.';
+    setStatus(msg, { err:true });
     setBusy(false); return;
   }
 }
@@ -362,7 +373,7 @@ f.addEventListener('submit', async (e) => {
     authed = true; showTokenField(false);
     const { job_id } = await r.json();
     try { localStorage.setItem(JOB_KEY, JSON.stringify({ job_id, token, ts: Date.now() })); } catch(e){}
-    poll(job_id, token);
+    poll(job_id, token, false);
   } catch (err) {
     setStatus('Falha: ' + err, { err:true });
     setBusy(false);
@@ -427,9 +438,12 @@ document.getElementById('forget').addEventListener('click', async (e) => {
   }
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(JOB_KEY) || 'null'); } catch(e){}
-  if (saved && saved.job_id) {
+  const fresh = saved && saved.job_id && saved.ts && (Date.now() - saved.ts) < 30*60*1000;
+  if (fresh) {
     setStatus('Retomando o áudio em andamento…', { loading:true });
-    poll(saved.job_id, saved.token || '');
+    poll(saved.job_id, saved.token || '', true);
+  } else if (saved) {
+    try { localStorage.removeItem(JOB_KEY); } catch(e){}  // job velho: descarta
   }
 })();
 </script>
