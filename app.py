@@ -276,9 +276,13 @@ INDEX_HTML = """<!doctype html>
   .hname { font-size:14px; color:#e8e8ea; white-space:nowrap; overflow:hidden;
     text-overflow:ellipsis; }
   .hdate { font-size:12px; color:#7b8291; margin-top:2px; }
-  .hbtns { display:flex; gap:6px; flex:0 0 auto; }
-  .hbtn { width:38px; margin:0; padding:9px 0; background:#20242f; font-size:15px; }
+  .hbtns { display:flex; gap:5px; flex:0 0 auto; }
+  .hbtn { width:32px; margin:0; padding:8px 0; background:#20242f; font-size:14px; }
   .hbtn.del { background:transparent; color:#7b8291; }
+  .hbtn.on { color:#ffcf5c; }
+  #histsearch { margin-bottom:12px; }
+  .renameinp { width:100%; padding:6px 8px; background:#0e0f13; border:1px solid #3a4152;
+    border-radius:8px; color:#e8e8ea; font-size:14px; }
 </style>
 </head>
 <body>
@@ -313,7 +317,14 @@ INDEX_HTML = """<!doctype html>
     </form>
     <div class="status" id="status"><span class="spinner" id="spin"></span><span id="stxt"></span></div>
     <div id="player"></div>
-    <div class="hist" id="hist"></div>
+    <div class="hist">
+      <div id="histhead" class="hidden">
+        <h2>Histórico</h2>
+        <input type="text" id="histsearch" placeholder="Buscar no histórico"
+               enterkeyhint="search" autocapitalize="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div id="histlist"></div>
+    </div>
   </div>
 <script>
 const f = document.getElementById('f');
@@ -322,7 +333,9 @@ const spin = document.getElementById('spin');
 const stxt = document.getElementById('stxt');
 const statusEl = document.getElementById('status');
 const player = document.getElementById('player');
-const histEl = document.getElementById('hist');
+const histListEl = document.getElementById('histlist');
+const histHeadEl = document.getElementById('histhead');
+const histSearchEl = document.getElementById('histsearch');
 const tokenEl = document.getElementById('token');
 const titleEl = document.getElementById('title');
 const fileEl = document.getElementById('file');
@@ -389,7 +402,7 @@ async function saveAudio(blob, filename){
 }
 
 // ---------------- histórico (IndexedDB, por aparelho) ----------------
-const DBN='mdaudio_db', STORE='audios', HMAX=12;
+const DBN='mdaudio_db', STORE='audios', HMAX=20;
 function openDB(){ return new Promise((res,rej)=>{
   const r = indexedDB.open(DBN, 1);
   r.onupgradeneeded = () => { if(!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE,{keyPath:'id'}); };
@@ -407,34 +420,63 @@ async function histPut(item){
   try {
     await txReq('readwrite', s=>s.put(item));
     const all = await histAll();
-    for (const old of all.slice(HMAX)) await histDel(old.id);
+    const unpinned = all.filter(x=>!x.pinned);   // fixados nunca são removidos
+    for (const old of unpinned.slice(HMAX)) await histDel(old.id);
   } catch(e){}
 }
+let _histItems = [];
 async function renderHistory(){
-  let items = await histAll();
-  if (!items.length) { histEl.innerHTML = ''; return; }
-  histEl.innerHTML = '<h2>Histórico</h2>' + items.map(it =>
+  _histItems = await histAll();
+  histHeadEl.classList.toggle('hidden', _histItems.length === 0);
+  renderList();
+}
+function renderList(){
+  const q = (histSearchEl.value || '').trim().toLowerCase();
+  let items = _histItems.slice();
+  if (q) items = items.filter(it => (it.title || '').toLowerCase().includes(q));
+  items.sort((a, b) => (b.pinned?1:0) - (a.pinned?1:0) || b.ts - a.ts);  // fixados no topo
+  if (!items.length) { histListEl.innerHTML = q ? '<div class="hdate">Nada encontrado.</div>' : ''; return; }
+  histListEl.innerHTML = items.map(it =>
     '<div class="hitem" data-id="'+it.id+'">' +
       '<div class="hinfo"><div class="hname">'+esc(it.title)+'</div>' +
       '<div class="hdate">'+relDate(it.ts)+'</div></div>' +
       '<div class="hbtns">' +
         '<button class="hbtn" data-act="play" title="Ouvir">▶</button>' +
+        '<button class="hbtn'+(it.pinned?' on':'')+'" data-act="pin" title="Fixar">'+(it.pinned?'★':'☆')+'</button>' +
+        '<button class="hbtn" data-act="rename" title="Renomear">✎</button>' +
         '<button class="hbtn" data-act="save" title="Salvar">⬇</button>' +
         '<button class="hbtn del" data-act="del" title="Remover">✕</button>' +
       '</div>' +
     '</div>').join('');
 }
-histEl.addEventListener('click', async (e) => {
+histSearchEl.addEventListener('input', renderList);
+histSearchEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); histSearchEl.blur(); } });
+
+histListEl.addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-act]'); if (!b) return;
-  const id = e.target.closest('.hitem').getAttribute('data-id');
+  const row = e.target.closest('.hitem'); const id = row.getAttribute('data-id');
   const act = b.getAttribute('data-act');
   if (act === 'del') { await histDel(id); renderHistory(); return; }
   const rec = await histGet(id);
-  if (!rec || !rec.blob) { setStatus('Item indisponível.', { err:true }); return; }
+  if (!rec) { setStatus('Item indisponível.', { err:true }); return; }
   if (act === 'play') {
-    mountPlayer(player, rec.blob, rec.id, rec.title);
+    if (rec.blob) mountPlayer(player, rec.blob, rec.id, rec.title);
   } else if (act === 'save') {
-    saveAudio(rec.blob, sanitize(rec.title) + '.mp3');
+    if (rec.blob) saveAudio(rec.blob, sanitize(rec.title) + '.mp3');
+  } else if (act === 'pin') {
+    rec.pinned = !rec.pinned; await histPut(rec); renderHistory();
+  } else if (act === 'rename') {
+    const nameEl = row.querySelector('.hname');
+    const cur = rec.title || '';
+    nameEl.innerHTML = '<input class="renameinp" type="text" enterkeyhint="done">';
+    const inp = nameEl.querySelector('input'); inp.value = cur; inp.focus(); inp.select();
+    let done = false;
+    const commit = async () => {
+      if (done) return; done = true;
+      rec.title = (inp.value.trim() || cur); await histPut(rec); renderHistory();
+    };
+    inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); commit(); } });
+    inp.addEventListener('blur', commit);
   }
 });
 
