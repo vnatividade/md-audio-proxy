@@ -37,6 +37,8 @@ MAX_MD_BYTES = int(os.environ.get("MAX_MD_BYTES", str(2 * 1024 * 1024)))
 COOKIE_NAME = "md_auth"
 COOKIE_MAXAGE = int(os.environ.get("COOKIE_MAXAGE", str(365 * 24 * 3600)))  # 1 ano
 
+ALLOWED_VOICES = {"pm_santa", "pm_alex", "pf_dora"}
+
 _jobs = {}            # id -> dict
 _lock = threading.Lock()
 _last_worker_seen = [0.0]
@@ -105,12 +107,19 @@ def synthesize():
     if not text.strip():
         abort(400, "Arquivo vazio")
 
+    voice = request.form.get("voice") if request.form.get("voice") in ALLOWED_VOICES else None
+    try:
+        speed = max(0.5, min(float(request.form.get("speed")), 2.0))
+    except (TypeError, ValueError):
+        speed = None
+
     jid = uuid.uuid4().hex[:16]
     name = os.path.splitext(os.path.basename(up.filename))[0] or "audio"
     with _lock:
         _cleanup()
         _jobs[jid] = {
             "status": "pending", "text": text, "name": name,
+            "voice": voice, "speed": speed,
             "result": None, "error": None,
             "created": _now(), "updated": _now(),
         }
@@ -168,7 +177,8 @@ def jobs_next():
             if j["status"] == "pending":
                 j["status"] = "processing"
                 j["updated"] = _now()
-                return jsonify({"id": jid, "text": j["text"], "name": j["name"]})
+                return jsonify({"id": jid, "text": j["text"], "name": j["name"],
+                                "voice": j.get("voice"), "speed": j.get("speed")})
     return ("", 204)
 
 
@@ -230,9 +240,11 @@ INDEX_HTML = """<!doctype html>
   h1 { font-size:22px; margin:0 0 4px; }
   p.sub { margin:0 0 22px; color:#9aa0ae; font-size:14px; }
   label { display:block; font-size:13px; color:#c3c8d4; margin:16px 0 6px; }
-  input[type=text], input[type=password], input[type=file] { width:100%; padding:12px;
+  input[type=text], input[type=password], input[type=file], select { width:100%; padding:12px;
     background:#0e0f13; border:1px solid #2c313d; border-radius:10px;
     color:#e8e8ea; font-size:15px; }
+  input[type=range] { width:100%; accent-color:#5b8cff; margin-top:4px; }
+  .rangeval { color:#5b8cff; font-weight:600; }
   button { width:100%; margin-top:22px; padding:14px; border:0; border-radius:12px;
     background:#5b8cff; color:#fff; font-size:16px; font-weight:600; cursor:pointer; }
   button:disabled { opacity:.55; cursor:default; }
@@ -284,6 +296,14 @@ INDEX_HTML = """<!doctype html>
       </div>
       <label for="title">Título (opcional)</label>
       <input type="text" id="title" enterkeyhint="done" placeholder="ex: Capítulo 3 — se vazio, usa o nome do arquivo">
+      <label for="voice">Voz</label>
+      <select id="voice" name="voice">
+        <option value="pm_santa">Masculina — Santa</option>
+        <option value="pm_alex">Masculina — Alex</option>
+        <option value="pf_dora">Feminina — Dora</option>
+      </select>
+      <label for="speed">Velocidade da fala: <span class="rangeval" id="speedval">1,0×</span></label>
+      <input type="range" id="speed" name="speed" min="0.8" max="1.3" step="0.05" value="1.0">
       <label for="file">Arquivo Markdown (.md)</label>
       <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain" required>
       <button id="btn" type="submit">Gerar áudio</button>
@@ -303,6 +323,9 @@ const histEl = document.getElementById('hist');
 const tokenEl = document.getElementById('token');
 const titleEl = document.getElementById('title');
 const fileEl = document.getElementById('file');
+const voiceEl = document.getElementById('voice');
+const speedEl = document.getElementById('speed');
+const speedValEl = document.getElementById('speedval');
 const tokenWrap = document.getElementById('tokenwrap');
 const conn = document.getElementById('conn');
 const JOB_KEY = 'mdaudio_job';
@@ -317,6 +340,19 @@ function setStatus(msg, opts){
   statusEl.classList.toggle('err', !!opts.err);
 }
 function setBusy(b){ btn.disabled = b; }
+function fmtSpeed(v){ return (Math.round(v*100)/100).toString().replace('.', ',') + '×'; }
+function loadPrefs(){
+  try {
+    const p = JSON.parse(localStorage.getItem('mdaudio_prefs') || '{}');
+    if (p.voice) voiceEl.value = p.voice;
+    if (p.speed) speedEl.value = p.speed;
+  } catch(e){}
+  speedValEl.textContent = fmtSpeed(parseFloat(speedEl.value));
+}
+function savePrefs(){
+  try { localStorage.setItem('mdaudio_prefs', JSON.stringify({ voice: voiceEl.value, speed: speedEl.value })); } catch(e){}
+}
+speedEl.addEventListener('input', () => { speedValEl.textContent = fmtSpeed(parseFloat(speedEl.value)); });
 function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function sanitize(s){ return ((s||'audio').replace(/[\\\\/:*?"<>|]+/g,'_').trim() || 'audio').slice(0,80); }
 function relDate(ts){
@@ -454,6 +490,7 @@ f.addEventListener('submit', async (e) => {
   if (token) { try { localStorage.setItem(TOK_KEY, token); } catch(e){} }
   const fname = (fileEl.files[0] && fileEl.files[0].name) || 'audio';
   const title = (titleEl.value.trim()) || fname.replace(/\\.[^.]+$/, '');
+  savePrefs();
   setBusy(true); setStatus('Enviando…', { loading:true });
   try {
     const data = new FormData(f);
@@ -521,6 +558,7 @@ document.getElementById('forget').addEventListener('click', async (e) => {
     try { const t = localStorage.getItem(TOK_KEY); if (t) tokenEl.value = t; } catch(e){}
   }
 
+  loadPrefs();
   renderHistory();
 
   let saved = null;
