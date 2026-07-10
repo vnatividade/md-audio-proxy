@@ -8,8 +8,7 @@ Fluxo:
   Mac worker --POST /jobs/<id>/result --> entrega mp3 (vira done)
   navegador  --GET  /result/<id>  -->  baixa o mp3 quando pronto
 
-Auth do usuário: token via form/header/arg OU cookie de dispositivo (md_auth),
-gravado após o 1º uso pra não pedir o token de novo naquele aparelho.
+Auth do usuário: token via form/header/arg OU cookie de dispositivo (md_auth).
 """
 import os
 import io
@@ -28,6 +27,7 @@ def _json_error(e):
     # respostas de erro em JSON limpo (nada de página HTML crua no front)
     return jsonify({"error": e.description, "code": e.code}), e.code
 
+
 APP_TOKEN = os.environ.get("APP_TOKEN", "")           # token do usuário (navegador)
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")     # token do canal Railway<->Mac
 JOB_TTL = int(os.environ.get("JOB_TTL", "1800"))      # jobs somem após 30 min
@@ -39,7 +39,7 @@ COOKIE_MAXAGE = int(os.environ.get("COOKIE_MAXAGE", str(365 * 24 * 3600)))  # 1 
 
 _jobs = {}            # id -> dict
 _lock = threading.Lock()
-_last_worker_seen = [0.0]   # timestamp do último poll do worker
+_last_worker_seen = [0.0]
 
 
 def _now():
@@ -53,7 +53,6 @@ def _cleanup():
         if now - j["created"] > JOB_TTL:
             _jobs.pop(k, None)
         elif j["status"] == "processing" and now - j["updated"] > PROCESSING_TIMEOUT:
-            # worker sumiu no meio: volta pra fila
             j["status"] = "pending"
             j["updated"] = now
 
@@ -87,7 +86,6 @@ def _worker_ok(req):
 
 @app.after_request
 def _no_store(resp):
-    # nada de cache: garante que o navegador sempre pega o HTML/JS mais novo
     resp.headers["Cache-Control"] = "no-store, max-age=0"
     return resp
 
@@ -116,7 +114,6 @@ def synthesize():
             "result": None, "error": None,
             "created": _now(), "updated": _now(),
         }
-    # lembra este aparelho: da próxima vez o token não é mais pedido
     return _set_auth_cookie(jsonify({"job_id": jid, "name": name}))
 
 
@@ -136,20 +133,17 @@ def result(jid):
         )
     if j["status"] == "error":
         abort(500, j["error"] or "Falha no processamento")
-    # pending / processing
     worker_online = (_now() - _last_worker_seen[0]) < 20
     return jsonify({"status": j["status"], "worker_online": worker_online}), 202
 
 
 @app.get("/me")
 def me():
-    # o navegador usa isto pra decidir se mostra o campo de token
     return {"authed": _user_ok(request)}
 
 
 @app.post("/login")
 def login():
-    # usado pelo "link mágico" (?token=...): valida e grava o cookie do aparelho
     if not _user_ok(request):
         abort(403, "Token inválido")
     return _set_auth_cookie(jsonify({"authed": True}))
@@ -230,13 +224,13 @@ INDEX_HTML = """<!doctype html>
   * { box-sizing: border-box; }
   body { margin:0; font-family:-apple-system,system-ui,sans-serif;
     background:#0e0f13; color:#e8e8ea; display:flex; min-height:100vh;
-    align-items:center; justify-content:center; padding:24px; }
+    align-items:flex-start; justify-content:center; padding:24px; }
   .card { width:100%; max-width:440px; background:#16181f; border:1px solid #262a35;
-    border-radius:18px; padding:28px; }
+    border-radius:18px; padding:28px; margin-top:16px; }
   h1 { font-size:22px; margin:0 0 4px; }
   p.sub { margin:0 0 22px; color:#9aa0ae; font-size:14px; }
   label { display:block; font-size:13px; color:#c3c8d4; margin:16px 0 6px; }
-  input[type=password], input[type=file] { width:100%; padding:12px;
+  input[type=text], input[type=password], input[type=file] { width:100%; padding:12px;
     background:#0e0f13; border:1px solid #2c313d; border-radius:10px;
     color:#e8e8ea; font-size:15px; }
   button { width:100%; margin-top:22px; padding:14px; border:0; border-radius:12px;
@@ -258,7 +252,18 @@ INDEX_HTML = """<!doctype html>
   .conn a { color:#9aa0ae; margin-left:8px; }
   .hidden { display:none !important; }
   audio { width:100%; margin-top:18px; }
-  a.dl { display:inline-block; margin-top:10px; color:#5b8cff; font-size:14px; }
+  .save { margin-top:12px; background:#2c313d; }
+  .hist { margin-top:26px; }
+  .hist h2 { font-size:14px; color:#9aa0ae; margin:0 0 10px; font-weight:600; }
+  .hitem { display:flex; align-items:center; gap:10px; padding:10px 12px;
+    background:#0e0f13; border:1px solid #232838; border-radius:12px; margin-bottom:8px; }
+  .hinfo { flex:1 1 auto; min-width:0; }
+  .hname { font-size:14px; color:#e8e8ea; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; }
+  .hdate { font-size:12px; color:#7b8291; margin-top:2px; }
+  .hbtns { display:flex; gap:6px; flex:0 0 auto; }
+  .hbtn { width:38px; margin:0; padding:9px 0; background:#20242f; font-size:15px; }
+  .hbtn.del { background:transparent; color:#7b8291; }
 </style>
 </head>
 <body>
@@ -277,12 +282,15 @@ INDEX_HTML = """<!doctype html>
           <button type="button" id="paste" class="paste">Colar</button>
         </div>
       </div>
+      <label for="title">Título (opcional)</label>
+      <input type="text" id="title" enterkeyhint="done" placeholder="ex: Capítulo 3 — se vazio, usa o nome do arquivo">
       <label for="file">Arquivo Markdown (.md)</label>
       <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain" required>
       <button id="btn" type="submit">Gerar áudio</button>
     </form>
     <div class="status" id="status"><span class="spinner" id="spin"></span><span id="stxt"></span></div>
     <div id="player"></div>
+    <div class="hist" id="hist"></div>
   </div>
 <script>
 const f = document.getElementById('f');
@@ -291,12 +299,15 @@ const spin = document.getElementById('spin');
 const stxt = document.getElementById('stxt');
 const statusEl = document.getElementById('status');
 const player = document.getElementById('player');
+const histEl = document.getElementById('hist');
 const tokenEl = document.getElementById('token');
+const titleEl = document.getElementById('title');
+const fileEl = document.getElementById('file');
 const tokenWrap = document.getElementById('tokenwrap');
 const conn = document.getElementById('conn');
 const JOB_KEY = 'mdaudio_job';
 const TOK_KEY = 'mdaudio_token';
-let authed = false;   // aparelho já lembrado (cookie)?
+let authed = false;
 
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function setStatus(msg, opts){
@@ -306,15 +317,98 @@ function setStatus(msg, opts){
   statusEl.classList.toggle('err', !!opts.err);
 }
 function setBusy(b){ btn.disabled = b; }
+function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function sanitize(s){ return ((s||'audio').replace(/[\\\\/:*?"<>|]+/g,'_').trim() || 'audio').slice(0,80); }
+function relDate(ts){
+  const d = Math.floor((Date.now()-ts)/1000);
+  if (d < 60) return 'agora';
+  if (d < 3600) return 'há ' + Math.floor(d/60) + ' min';
+  if (d < 86400) return 'há ' + Math.floor(d/3600) + ' h';
+  return new Date(ts).toLocaleDateString('pt-BR');
+}
 
 function showTokenField(show){
   tokenWrap.classList.toggle('hidden', !show);
   conn.style.display = show ? 'none' : 'block';
-  // required só quando o campo está visível (senão o form não envia)
   if (show) tokenEl.setAttribute('required',''); else tokenEl.removeAttribute('required');
 }
 
-async function poll(job_id, token, isResume){
+// salvar/baixar de forma confiável (Web Share no iOS; fallback download no desktop)
+async function saveAudio(blob, filename){
+  try {
+    const file = new File([blob], filename, { type:'audio/mpeg' });
+    if (navigator.canShare && navigator.canShare({ files:[file] })) {
+      await navigator.share({ files:[file], title: filename });
+      return;
+    }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a);
+  a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+
+// ---------------- histórico (IndexedDB, por aparelho) ----------------
+const DBN='mdaudio_db', STORE='audios', HMAX=12;
+function openDB(){ return new Promise((res,rej)=>{
+  const r = indexedDB.open(DBN, 1);
+  r.onupgradeneeded = () => { if(!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE,{keyPath:'id'}); };
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+}); }
+function txReq(mode, fn){ return new Promise(async (res,rej)=>{
+  try { const db = await openDB(); const rq = fn(db.transaction(STORE,mode).objectStore(STORE));
+    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+  } catch(e){ rej(e); }
+}); }
+async function histAll(){ let a=[]; try { a = await txReq('readonly', s=>s.getAll()) || []; } catch(e){} a.sort((x,y)=>y.ts-x.ts); return a; }
+async function histGet(id){ try { return await txReq('readonly', s=>s.get(id)); } catch(e){ return null; } }
+async function histDel(id){ try { await txReq('readwrite', s=>s.delete(id)); } catch(e){} }
+async function histPut(item){
+  try {
+    await txReq('readwrite', s=>s.put(item));
+    const all = await histAll();
+    for (const old of all.slice(HMAX)) await histDel(old.id);
+  } catch(e){}
+}
+async function renderHistory(){
+  let items = await histAll();
+  if (!items.length) { histEl.innerHTML = ''; return; }
+  histEl.innerHTML = '<h2>Histórico</h2>' + items.map(it =>
+    '<div class="hitem" data-id="'+it.id+'">' +
+      '<div class="hinfo"><div class="hname">'+esc(it.title)+'</div>' +
+      '<div class="hdate">'+relDate(it.ts)+'</div></div>' +
+      '<div class="hbtns">' +
+        '<button class="hbtn" data-act="play" title="Ouvir">▶</button>' +
+        '<button class="hbtn" data-act="save" title="Salvar">⬇</button>' +
+        '<button class="hbtn del" data-act="del" title="Remover">✕</button>' +
+      '</div>' +
+    '</div>').join('');
+}
+histEl.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  const id = e.target.closest('.hitem').getAttribute('data-id');
+  const act = b.getAttribute('data-act');
+  if (act === 'del') { await histDel(id); renderHistory(); return; }
+  const rec = await histGet(id);
+  if (!rec || !rec.blob) { setStatus('Item indisponível.', { err:true }); return; }
+  if (act === 'play') {
+    const url = URL.createObjectURL(rec.blob);
+    player.innerHTML = '<audio controls autoplay src="'+url+'"></audio>';
+  } else if (act === 'save') {
+    saveAudio(rec.blob, sanitize(rec.title) + '.mp3');
+  }
+});
+
+function showResult(blob, title){
+  const url = URL.createObjectURL(blob);
+  player.innerHTML =
+    '<audio controls autoplay src="'+url+'"></audio>' +
+    '<button type="button" class="save" id="savebtn">⬇ Salvar / compartilhar .mp3</button>';
+  document.getElementById('savebtn').addEventListener('click', ()=>saveAudio(blob, sanitize(title)+'.mp3'));
+}
+
+async function poll(job_id, token, isResume, title){
   setBusy(true);
   while (true) {
     let rr;
@@ -329,12 +423,11 @@ async function poll(job_id, token, isResume){
     }
     if (rr.status === 200) {
       const blob = await rr.blob();
-      const url = URL.createObjectURL(blob);
       setStatus('Pronto!');
-      player.innerHTML =
-        '<audio controls autoplay src="'+url+'"></audio>' +
-        '<a class="dl" href="'+url+'" download="audio.mp3">Baixar .mp3</a>';
+      showResult(blob, title || 'áudio');
       try { localStorage.removeItem(JOB_KEY); } catch(e){}
+      await histPut({ id: job_id, title: title || 'áudio', ts: Date.now(), blob });
+      renderHistory();
       setBusy(false); return;
     }
     if (rr.status === 202) {
@@ -345,7 +438,6 @@ async function poll(job_id, token, isResume){
       await sleep(1500); continue;
     }
     try { localStorage.removeItem(JOB_KEY); } catch(e){}
-    // job retomado que já sumiu (sessão anterior): limpa em silêncio
     if (rr.status === 404 && isResume) { setStatus(''); setBusy(false); return; }
     let msg = 'Erro ' + rr.status;
     try { const j = await rr.json(); if (j && j.error) msg = j.error; } catch(e){}
@@ -360,20 +452,20 @@ f.addEventListener('submit', async (e) => {
   player.innerHTML = '';
   const token = tokenEl.value;
   if (token) { try { localStorage.setItem(TOK_KEY, token); } catch(e){} }
+  const fname = (fileEl.files[0] && fileEl.files[0].name) || 'audio';
+  const title = (titleEl.value.trim()) || fname.replace(/\\.[^.]+$/, '');
   setBusy(true); setStatus('Enviando…', { loading:true });
   try {
     const data = new FormData(f);
     const r = await fetch('/synthesize', { method:'POST', body:data, credentials:'same-origin' });
     if (!r.ok) {
-      const t = await r.text();
-      setStatus('Erro ' + r.status + ': ' + t.slice(0,160), { err:true });
-      setBusy(false); return;
+      let msg = 'Erro ' + r.status; try { const j = await r.json(); if (j && j.error) msg = j.error; } catch(e){}
+      setStatus(msg, { err:true }); setBusy(false); return;
     }
-    // deu certo → aparelho lembrado; esconde o campo de token daqui pra frente
     authed = true; showTokenField(false);
     const { job_id } = await r.json();
-    try { localStorage.setItem(JOB_KEY, JSON.stringify({ job_id, token, ts: Date.now() })); } catch(e){}
-    poll(job_id, token, false);
+    try { localStorage.setItem(JOB_KEY, JSON.stringify({ job_id, token, title, ts: Date.now() })); } catch(e){}
+    poll(job_id, token, false, title);
   } catch (err) {
     setStatus('Falha: ' + err, { err:true });
     setBusy(false);
@@ -386,19 +478,13 @@ document.getElementById('paste').addEventListener('click', async () => {
     if (t) { tokenEl.value = t; setStatus('Token colado.'); tokenEl.blur(); return; }
     setStatus('Área de transferência vazia — copie o token primeiro.', { err:true });
   } catch (e) {
-    // iOS costuma bloquear a leitura automática: guia o colar manual
     tokenEl.focus(); tokenEl.select();
     setStatus('Toque e segure no campo acima e escolha "Colar".', { err:true });
   }
 });
-
-// confirma quando o token é colado manualmente (segurar → Colar)
 tokenEl.addEventListener('paste', () => { setTimeout(() => setStatus('Token colado.'), 0); });
-
-// fechar o teclado: tecla "Concluído" no campo, ou tocar fora
-tokenEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); tokenEl.blur(); }
-});
+tokenEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tokenEl.blur(); } });
+titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); } });
 document.addEventListener('click', (e) => {
   if (!e.target.closest('input, textarea, button, a')) {
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -412,9 +498,7 @@ document.getElementById('forget').addEventListener('click', async (e) => {
   authed = false; tokenEl.value = ''; showTokenField(true); tokenEl.focus();
 });
 
-// init: descobre se o aparelho já está lembrado e retoma job pendente
 (async function init(){
-  // link mágico: ?token=... autentica este aparelho e some da URL na hora
   try {
     const ut = (new URLSearchParams(location.search).get('token') || '').trim();
     if (ut) {
@@ -422,7 +506,7 @@ document.getElementById('forget').addEventListener('click', async (e) => {
         const r = await fetch('/login', { method:'POST', headers:{ 'X-App-Token': ut }, credentials:'same-origin' });
         if (r.ok) authed = true;
       } catch(e){}
-      history.replaceState({}, '', location.pathname);  // limpa o token da URL
+      history.replaceState({}, '', location.pathname);
     }
   } catch(e){}
 
@@ -436,14 +520,17 @@ document.getElementById('forget').addEventListener('click', async (e) => {
   if (!authed) {
     try { const t = localStorage.getItem(TOK_KEY); if (t) tokenEl.value = t; } catch(e){}
   }
+
+  renderHistory();
+
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(JOB_KEY) || 'null'); } catch(e){}
   const fresh = saved && saved.job_id && saved.ts && (Date.now() - saved.ts) < 30*60*1000;
   if (fresh) {
     setStatus('Retomando o áudio em andamento…', { loading:true });
-    poll(saved.job_id, saved.token || '', true);
+    poll(saved.job_id, saved.token || '', true, saved.title || 'áudio');
   } else if (saved) {
-    try { localStorage.removeItem(JOB_KEY); } catch(e){}  // job velho: descarta
+    try { localStorage.removeItem(JOB_KEY); } catch(e){}
   }
 })();
 </script>
