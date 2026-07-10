@@ -7,6 +7,9 @@ Fluxo:
   Mac worker --GET  /jobs/next  -->  pega job pending (vira processing)
   Mac worker --POST /jobs/<id>/result --> entrega mp3 (vira done)
   navegador  --GET  /result/<id>  -->  baixa o mp3 quando pronto
+
+Auth do usuário: token via form/header/arg OU cookie de dispositivo (md_auth),
+gravado após o 1º uso pra não pedir o token de novo naquele aparelho.
 """
 import os
 import io
@@ -23,6 +26,9 @@ WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")     # token do canal Railway<-
 JOB_TTL = int(os.environ.get("JOB_TTL", "1800"))      # jobs somem após 30 min
 PROCESSING_TIMEOUT = int(os.environ.get("PROCESSING_TIMEOUT", "600"))
 MAX_MD_BYTES = int(os.environ.get("MAX_MD_BYTES", str(2 * 1024 * 1024)))
+
+COOKIE_NAME = "md_auth"
+COOKIE_MAXAGE = int(os.environ.get("COOKIE_MAXAGE", str(365 * 24 * 3600)))  # 1 ano
 
 _jobs = {}            # id -> dict
 _lock = threading.Lock()
@@ -52,9 +58,18 @@ def _user_ok(req):
         req.headers.get("X-App-Token")
         or req.form.get("token")
         or req.args.get("token")
+        or req.cookies.get(COOKIE_NAME)
         or ""
     )
     return supplied == APP_TOKEN
+
+
+def _set_auth_cookie(resp):
+    resp.set_cookie(
+        COOKIE_NAME, APP_TOKEN,
+        max_age=COOKIE_MAXAGE, httponly=True, secure=True, samesite="Lax",
+    )
+    return resp
 
 
 def _worker_ok(req):
@@ -94,7 +109,8 @@ def synthesize():
             "result": None, "error": None,
             "created": _now(), "updated": _now(),
         }
-    return jsonify({"job_id": jid, "name": name})
+    # lembra este aparelho: da próxima vez o token não é mais pedido
+    return _set_auth_cookie(jsonify({"job_id": jid, "name": name}))
 
 
 @app.get("/result/<jid>")
@@ -116,6 +132,19 @@ def result(jid):
     # pending / processing
     worker_online = (_now() - _last_worker_seen[0]) < 20
     return jsonify({"status": j["status"], "worker_online": worker_online}), 202
+
+
+@app.get("/me")
+def me():
+    # o navegador usa isto pra decidir se mostra o campo de token
+    return {"authed": _user_ok(request)}
+
+
+@app.post("/logout")
+def logout():
+    resp = jsonify({"ok": True})
+    resp.delete_cookie(COOKIE_NAME)
+    return resp
 
 
 # ----------------------------- worker (Mac) -------------------------------
@@ -206,6 +235,9 @@ INDEX_HTML = """<!doctype html>
   .spinner.on { display:inline-block; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .status.err { color:#ff6b6b; }
+  .conn { margin:2px 0 4px; font-size:13px; color:#7fd18c; display:none; }
+  .conn a { color:#9aa0ae; margin-left:8px; }
+  .hidden { display:none !important; }
   audio { width:100%; margin-top:18px; }
   a.dl { display:inline-block; margin-top:10px; color:#5b8cff; font-size:14px; }
 </style>
@@ -216,9 +248,12 @@ INDEX_HTML = """<!doctype html>
     <p class="sub">Suba um arquivo .md e ouça em PT-BR.<br>
       Dica: escreva <b>pausa de 5 segundos</b> (ou <b>pausa de 1 minuto</b>) no texto pra inserir silêncio.<br>
       O áudio é gerado no servidor pessoal (Mac Studio).</p>
+    <div class="conn" id="conn">🔓 Conectado neste aparelho<a href="#" id="forget">trocar token</a></div>
     <form id="f">
-      <label for="token">Token de acesso</label>
-      <input type="password" id="token" name="token" autocomplete="current-password" required>
+      <div id="tokenwrap">
+        <label for="token">Token de acesso</label>
+        <input type="password" id="token" name="token" autocomplete="current-password">
+      </div>
       <label for="file">Arquivo Markdown (.md)</label>
       <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain" required>
       <button id="btn" type="submit">Gerar áudio</button>
@@ -229,13 +264,16 @@ INDEX_HTML = """<!doctype html>
 <script>
 const f = document.getElementById('f');
 const btn = document.getElementById('btn');
-const statusEl = document.getElementById('status');
 const spin = document.getElementById('spin');
 const stxt = document.getElementById('stxt');
+const statusEl = document.getElementById('status');
 const player = document.getElementById('player');
 const tokenEl = document.getElementById('token');
+const tokenWrap = document.getElementById('tokenwrap');
+const conn = document.getElementById('conn');
 const JOB_KEY = 'mdaudio_job';
 const TOK_KEY = 'mdaudio_token';
+let authed = false;   // aparelho já lembrado (cookie)?
 
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function setStatus(msg, opts){
@@ -246,16 +284,22 @@ function setStatus(msg, opts){
 }
 function setBusy(b){ btn.disabled = b; }
 
-// pré-preenche o token salvo (comodidade no celular)
-try { const t = localStorage.getItem(TOK_KEY); if (t) tokenEl.value = t; } catch(e){}
+function showTokenField(show){
+  tokenWrap.classList.toggle('hidden', !show);
+  conn.style.display = show ? 'none' : 'block';
+  // required só quando o campo está visível (senão o form não envia)
+  if (show) tokenEl.setAttribute('required',''); else tokenEl.removeAttribute('required');
+}
 
 async function poll(job_id, token){
   setBusy(true);
-  // sem prazo curto: enquanto houver job, seguimos acompanhando
   while (true) {
     let rr;
     try {
-      rr = await fetch('/result/' + job_id, { headers: { 'X-App-Token': token }, cache:'no-store' });
+      rr = await fetch('/result/' + job_id, {
+        headers: token ? { 'X-App-Token': token } : {},
+        credentials: 'same-origin', cache:'no-store'
+      });
     } catch (e) {
       setStatus('Sem conexão… tentando de novo', { loading:true });
       await sleep(2500); continue;
@@ -277,7 +321,6 @@ async function poll(job_id, token){
         : 'Gerando o áudio no Mac Studio…', { loading:true });
       await sleep(1500); continue;
     }
-    // 404 (expirou) / 500 (erro) — encerra
     let t = ''; try { t = await rr.text(); } catch(e){}
     setStatus('Erro ' + rr.status + ': ' + t.slice(0,160), { err:true });
     try { localStorage.removeItem(JOB_KEY); } catch(e){}
@@ -289,16 +332,18 @@ f.addEventListener('submit', async (e) => {
   e.preventDefault();
   player.innerHTML = '';
   const token = tokenEl.value;
-  try { localStorage.setItem(TOK_KEY, token); } catch(e){}
+  if (token) { try { localStorage.setItem(TOK_KEY, token); } catch(e){} }
   setBusy(true); setStatus('Enviando…', { loading:true });
   try {
     const data = new FormData(f);
-    const r = await fetch('/synthesize', { method:'POST', body:data });
+    const r = await fetch('/synthesize', { method:'POST', body:data, credentials:'same-origin' });
     if (!r.ok) {
       const t = await r.text();
       setStatus('Erro ' + r.status + ': ' + t.slice(0,160), { err:true });
       setBusy(false); return;
     }
+    // deu certo → aparelho lembrado; esconde o campo de token daqui pra frente
+    authed = true; showTokenField(false);
     const { job_id } = await r.json();
     try { localStorage.setItem(JOB_KEY, JSON.stringify({ job_id, token, ts: Date.now() })); } catch(e){}
     poll(job_id, token);
@@ -308,13 +353,28 @@ f.addEventListener('submit', async (e) => {
   }
 });
 
-// retoma automaticamente um job em andamento se a página foi recarregada/reaberta
-(function resume(){
+document.getElementById('forget').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try { await fetch('/logout', { method:'POST', credentials:'same-origin' }); } catch(e){}
+  try { localStorage.removeItem(TOK_KEY); } catch(e){}
+  authed = false; tokenEl.value = ''; showTokenField(true); tokenEl.focus();
+});
+
+// init: descobre se o aparelho já está lembrado e retoma job pendente
+(async function init(){
+  try {
+    const me = await fetch('/me', { credentials:'same-origin', cache:'no-store' }).then(r=>r.json());
+    authed = !!me.authed;
+  } catch(e){ authed = false; }
+  showTokenField(!authed);
+  if (!authed) {
+    try { const t = localStorage.getItem(TOK_KEY); if (t) tokenEl.value = t; } catch(e){}
+  }
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(JOB_KEY) || 'null'); } catch(e){}
-  if (saved && saved.job_id && saved.token) {
+  if (saved && saved.job_id) {
     setStatus('Retomando o áudio em andamento…', { loading:true });
-    poll(saved.job_id, saved.token);
+    poll(saved.job_id, saved.token || '');
   }
 })();
 </script>
