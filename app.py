@@ -264,7 +264,10 @@ INDEX_HTML = """<!doctype html>
   .conn a { color:#9aa0ae; margin-left:8px; }
   .hidden { display:none !important; }
   audio { width:100%; margin-top:18px; }
-  .save { margin-top:12px; background:#2c313d; }
+  .pctl { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center; }
+  .pbtn { width:auto; margin:0; padding:9px 14px; background:#2c313d; color:#e8e8ea;
+    font-size:14px; font-weight:600; border-radius:10px; }
+  .pbtn.save { margin-left:auto; }
   .hist { margin-top:26px; }
   .hist h2 { font-size:14px; color:#9aa0ae; margin:0 0 10px; font-weight:600; }
   .hitem { display:flex; align-items:center; gap:10px; padding:10px 12px;
@@ -429,20 +432,61 @@ histEl.addEventListener('click', async (e) => {
   const rec = await histGet(id);
   if (!rec || !rec.blob) { setStatus('Item indisponível.', { err:true }); return; }
   if (act === 'play') {
-    const url = URL.createObjectURL(rec.blob);
-    player.innerHTML = '<audio controls autoplay src="'+url+'"></audio>';
+    mountPlayer(player, rec.blob, rec.id, rec.title);
   } else if (act === 'save') {
     saveAudio(rec.blob, sanitize(rec.title) + '.mp3');
   }
 });
 
-function showResult(blob, title){
+function fmtTime(s){ s = Math.max(0, Math.floor(s||0)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+
+// player com velocidade de reprodução, pular ±15s, salvar e retomar posição
+function mountPlayer(container, blob, id, title){
   const url = URL.createObjectURL(blob);
-  player.innerHTML =
-    '<audio controls autoplay src="'+url+'"></audio>' +
-    '<button type="button" class="save" id="savebtn">⬇ Salvar / compartilhar .mp3</button>';
-  document.getElementById('savebtn').addEventListener('click', ()=>saveAudio(blob, sanitize(title)+'.mp3'));
+  container.innerHTML =
+    '<audio id="pl" controls src="'+url+'"></audio>' +
+    '<div class="pctl">' +
+      '<button type="button" class="pbtn" id="back15">« 15s</button>' +
+      '<button type="button" class="pbtn" id="rate">1×</button>' +
+      '<button type="button" class="pbtn" id="fwd15">15s »</button>' +
+      '<button type="button" class="pbtn save" id="savebtn">⬇ Salvar</button>' +
+    '</div>';
+  const a = container.querySelector('#pl');
+  const rates = [1, 1.25, 1.5, 2];
+  let rate = parseFloat(localStorage.getItem('mdaudio_rate') || '1') || 1;
+  if (!rates.includes(rate)) rate = 1;
+  const rbtn = container.querySelector('#rate');
+  function applyRate(){ a.playbackRate = rate; rbtn.textContent = (rate+'').replace('.', ',') + '×'; }
+  applyRate();
+  rbtn.addEventListener('click', () => {
+    rate = rates[(rates.indexOf(rate) + 1) % rates.length];
+    try { localStorage.setItem('mdaudio_rate', rate); } catch(e){}
+    applyRate();
+  });
+  container.querySelector('#back15').addEventListener('click', () => { a.currentTime = Math.max(0, a.currentTime - 15); });
+  container.querySelector('#fwd15').addEventListener('click', () => { a.currentTime = Math.min((a.duration||1e9), a.currentTime + 15); });
+  container.querySelector('#savebtn').addEventListener('click', () => saveAudio(blob, sanitize(title) + '.mp3'));
+
+  // retomar de onde parou (posição por item, guardada no localStorage)
+  if (id) {
+    const POS = 'mdpos:' + id;
+    const saved = parseFloat(localStorage.getItem(POS) || '0');
+    a.addEventListener('loadedmetadata', () => {
+      applyRate();
+      if (saved > 5 && saved < a.duration - 5) { a.currentTime = saved; setStatus('Continuando de ' + fmtTime(saved)); }
+    }, { once:true });
+    let last = 0;
+    a.addEventListener('timeupdate', () => {
+      const t = a.currentTime;
+      if (Math.abs(t - last) >= 5) { last = t; try { localStorage.setItem(POS, t); } catch(e){} }
+    });
+    a.addEventListener('pause', () => { try { localStorage.setItem(POS, a.currentTime); } catch(e){} });
+    a.addEventListener('ended', () => { try { localStorage.removeItem(POS); } catch(e){} });
+  }
+  a.play().catch(()=>{});
 }
+
+function showResult(blob, title, id){ mountPlayer(player, blob, id, title); }
 
 async function poll(job_id, token, isResume, title){
   setBusy(true);
@@ -460,7 +504,7 @@ async function poll(job_id, token, isResume, title){
     if (rr.status === 200) {
       const blob = await rr.blob();
       setStatus('Pronto!');
-      showResult(blob, title || 'áudio');
+      showResult(blob, title || 'áudio', job_id);
       try { localStorage.removeItem(JOB_KEY); } catch(e){}
       await histPut({ id: job_id, title: title || 'áudio', ts: Date.now(), blob });
       renderHistory();
