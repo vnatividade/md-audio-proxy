@@ -257,7 +257,8 @@ INDEX_HTML = """<!doctype html>
       <div id="tokenwrap">
         <label for="token">Token de acesso</label>
         <div class="trow">
-          <input type="password" id="token" name="token" autocomplete="current-password">
+          <input type="text" id="token" name="token" enterkeyhint="done"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
           <button type="button" id="paste" class="paste">Colar</button>
         </div>
       </div>
@@ -363,10 +364,25 @@ f.addEventListener('submit', async (e) => {
 document.getElementById('paste').addEventListener('click', async () => {
   try {
     const t = ((await navigator.clipboard.readText()) || '').trim();
-    if (t) { tokenEl.value = t; setStatus('Token colado.'); }
-    else setStatus('Área de transferência vazia.', { err:true });
+    if (t) { tokenEl.value = t; setStatus('Token colado.'); tokenEl.blur(); return; }
+    setStatus('Área de transferência vazia — copie o token primeiro.', { err:true });
   } catch (e) {
-    setStatus('Não consegui colar automaticamente — cole manualmente no campo.', { err:true });
+    // iOS costuma bloquear a leitura automática: guia o colar manual
+    tokenEl.focus(); tokenEl.select();
+    setStatus('Toque e segure no campo acima e escolha "Colar".', { err:true });
+  }
+});
+
+// confirma quando o token é colado manualmente (segurar → Colar)
+tokenEl.addEventListener('paste', () => { setTimeout(() => setStatus('Token colado.'), 0); });
+
+// fechar o teclado: tecla "Concluído" no campo, ou tocar fora
+tokenEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); tokenEl.blur(); }
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('input, textarea, button, a')) {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   }
 });
 
