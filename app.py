@@ -140,6 +140,14 @@ def me():
     return {"authed": _user_ok(request)}
 
 
+@app.post("/login")
+def login():
+    # usado pelo "link mágico" (?token=...): valida e grava o cookie do aparelho
+    if not _user_ok(request):
+        abort(403, "Token inválido")
+    return _set_auth_cookie(jsonify({"authed": True}))
+
+
 @app.post("/logout")
 def logout():
     resp = jsonify({"ok": True})
@@ -395,10 +403,24 @@ document.getElementById('forget').addEventListener('click', async (e) => {
 
 // init: descobre se o aparelho já está lembrado e retoma job pendente
 (async function init(){
+  // link mágico: ?token=... autentica este aparelho e some da URL na hora
   try {
-    const me = await fetch('/me', { credentials:'same-origin', cache:'no-store' }).then(r=>r.json());
-    authed = !!me.authed;
-  } catch(e){ authed = false; }
+    const ut = (new URLSearchParams(location.search).get('token') || '').trim();
+    if (ut) {
+      try {
+        const r = await fetch('/login', { method:'POST', headers:{ 'X-App-Token': ut }, credentials:'same-origin' });
+        if (r.ok) authed = true;
+      } catch(e){}
+      history.replaceState({}, '', location.pathname);  // limpa o token da URL
+    }
+  } catch(e){}
+
+  if (!authed) {
+    try {
+      const me = await fetch('/me', { credentials:'same-origin', cache:'no-store' }).then(r=>r.json());
+      authed = !!me.authed;
+    } catch(e){ authed = false; }
+  }
   showTokenField(!authed);
   if (!authed) {
     try { const t = localStorage.getItem(TOK_KEY); if (t) tokenEl.value = t; } catch(e){}
