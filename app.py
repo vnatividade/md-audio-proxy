@@ -303,6 +303,7 @@ INDEX_HTML = """<!doctype html>
     --bg:#14110E; --card:#1E1A15; --border:#33291F; --text:#EFE7DA; --muted:#A79B88;
     --field:#100D09; --btn2:#2E2820; --accent:#E8A33D; --accent-ink:#1A1206;
     --err:#ff6b6b; --ok:#8FD19E; --pin:#F2C15A;
+    --display:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,'Times New Roman',serif;
   }
   :root[data-theme="light"] {
     color-scheme: light;
@@ -323,10 +324,15 @@ INDEX_HTML = """<!doctype html>
     background:var(--bg); color:var(--text); display:flex; min-height:100vh;
     align-items:flex-start; justify-content:center; padding:24px;
     transition:background .2s ease, color .2s ease; }
-  .card { width:100%; max-width:440px; background:var(--card); border:1px solid var(--border);
-    border-radius:18px; padding:28px; margin-top:16px; }
-  h1 { font-size:22px; margin:0 0 4px; }
-  p.sub { margin:0 0 16px; color:var(--muted); font-size:14px; }
+  .card { width:100%; max-width:440px; margin-top:16px; padding:30px 28px;
+    border:1px solid var(--border); border-radius:20px;
+    background:
+      radial-gradient(300px 150px at 50% -22px, rgba(232,163,61,.16), transparent 72%),
+      var(--card);
+    box-shadow:0 14px 44px rgba(0,0,0,.22); }
+  h1 { font-family:var(--display); font-size:28px; font-weight:600; letter-spacing:.2px;
+    margin:0 0 5px; }
+  p.sub { margin:0 0 16px; color:var(--muted); font-size:13.5px; line-height:1.5; }
   label { display:block; font-size:13px; color:var(--muted); margin:16px 0 6px; }
   input[type=text], input[type=password], input[type=file], select { width:100%; padding:12px;
     background:var(--field); border:1px solid var(--border); border-radius:10px;
@@ -377,6 +383,12 @@ INDEX_HTML = """<!doctype html>
   #histsearch { margin-bottom:12px; }
   .renameinp { width:100%; padding:6px 8px; background:var(--field); border:1px solid var(--border);
     border-radius:8px; color:var(--text); font-size:14px; }
+  /* facelift */
+  #btn { box-shadow:0 6px 18px rgba(232,163,61,.22); }
+  .secondary { background:var(--btn2); color:var(--text); margin-top:12px; font-size:15px; box-shadow:none; }
+  .hist h2 { font-family:var(--display); font-size:16px; color:var(--text); }
+  .hitem.pinned { border-left:3px solid var(--pin); }
+  .hitem { transition:border-color .15s ease; }
 </style>
 </head>
 <body>
@@ -392,7 +404,7 @@ INDEX_HTML = """<!doctype html>
         <button type="button" data-theme="dark">Escuro</button>
       </div>
     </div>
-    <div class="conn" id="conn">🔓 Conectado neste aparelho<a href="#" id="forget">trocar token</a></div>
+    <div class="conn" id="conn">Conectado neste aparelho<a href="#" id="forget">trocar token</a></div>
     <form id="f">
       <div id="tokenwrap">
         <label for="token">Token de acesso</label>
@@ -412,6 +424,7 @@ INDEX_HTML = """<!doctype html>
       </select>
       <label for="speed">Velocidade da fala: <span class="rangeval" id="speedval">1,0×</span></label>
       <input type="range" id="speed" name="speed" min="0.8" max="1.3" step="0.05" value="1.0">
+      <button type="button" id="preview" class="secondary">Ouvir prévia da voz</button>
       <label for="file">Arquivo Markdown (.md)</label>
       <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain" required>
       <button id="btn" type="submit">Gerar áudio</button>
@@ -549,7 +562,7 @@ function renderList(){
   items.sort((a, b) => (b.pinned?1:0) - (a.pinned?1:0) || b.ts - a.ts);  // fixados no topo
   if (!items.length) { histListEl.innerHTML = q ? '<div class="hdate">Nada encontrado.</div>' : ''; return; }
   histListEl.innerHTML = items.map(it =>
-    '<div class="hitem" data-id="'+it.id+'">' +
+    '<div class="hitem'+(it.pinned?' pinned':'')+'" data-id="'+it.id+'">' +
       '<div class="hinfo"><div class="hname">'+esc(it.title)+'</div>' +
       '<div class="hdate">'+relDate(it.ts)+'</div></div>' +
       '<div class="hbtns">' +
@@ -642,7 +655,7 @@ function mountPlayer(container, blob, id, title){
 
 function showResult(blob, title, id){ mountPlayer(player, blob, id, title); }
 
-async function poll(job_id, token, isResume, title){
+async function poll(job_id, token, isResume, title, isPreview){
   setBusy(true);
   while (true) {
     let rr;
@@ -657,11 +670,10 @@ async function poll(job_id, token, isResume, title){
     }
     if (rr.status === 200) {
       const blob = await rr.blob();
-      setStatus('Pronto!');
-      showResult(blob, title || 'áudio', job_id);
+      setStatus(isPreview ? 'Prévia pronta — ajuste ou gere o áudio completo.' : 'Pronto!');
+      showResult(blob, isPreview ? 'Prévia' : (title || 'áudio'), isPreview ? null : job_id);
       try { localStorage.removeItem(JOB_KEY); } catch(e){}
-      await histPut({ id: job_id, title: title || 'áudio', ts: Date.now(), blob });
-      renderHistory();
+      if (!isPreview) { await histPut({ id: job_id, title: title || 'áudio', ts: Date.now(), blob }); renderHistory(); }
       setBusy(false); return;
     }
     if (rr.status === 202) {
@@ -707,6 +719,29 @@ f.addEventListener('submit', async (e) => {
   }
 });
 
+async function doPreview(){
+  const txt = 'Esta é uma prévia da voz e da velocidade selecionadas. Se gostar, gere o áudio completo.';
+  savePrefs();
+  player.innerHTML = '';
+  setBusy(true); setStatus('Gerando prévia…', { loading:true });
+  try {
+    const fd = new FormData();
+    fd.append('voice', voiceEl.value);
+    fd.append('speed', speedEl.value);
+    fd.append('token', tokenEl.value);
+    fd.append('file', new File([txt], 'previa.md', { type:'text/markdown' }));
+    const r = await fetch('/synthesize', { method:'POST', body:fd, credentials:'same-origin' });
+    if (!r.ok) {
+      let m = 'Erro ' + r.status; try { const j = await r.json(); if (j && j.error) m = j.error; } catch(e){}
+      setStatus(m, { err:true }); setBusy(false); return;
+    }
+    authed = true; showTokenField(false);
+    const { job_id } = await r.json();
+    poll(job_id, tokenEl.value, false, 'Prévia', true);
+  } catch (err) { setStatus('Falha: ' + err, { err:true }); setBusy(false); }
+}
+document.getElementById('preview').addEventListener('click', doPreview);
+
 document.getElementById('paste').addEventListener('click', async () => {
   try {
     const t = ((await navigator.clipboard.readText()) || '').trim();
@@ -720,8 +755,16 @@ document.getElementById('paste').addEventListener('click', async () => {
 tokenEl.addEventListener('paste', () => { setTimeout(() => setStatus('Token colado.'), 0); });
 tokenEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tokenEl.blur(); } });
 titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); } });
+
+// título vem do nome do arquivo; se o usuário editar, respeita a edição
+let titleTouched = false;
+titleEl.addEventListener('input', () => { titleTouched = true; });
+fileEl.addEventListener('change', () => {
+  const fn = fileEl.files[0] && fileEl.files[0].name;
+  if (fn && !titleTouched) titleEl.value = fn.replace(/\\.[^.]+$/, '');
+});
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('input, textarea, button, a')) {
+  if (!e.target.closest('input, textarea, button, a, select, label, option')) {
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   }
 });
