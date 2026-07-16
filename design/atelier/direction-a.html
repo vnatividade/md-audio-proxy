@@ -1,0 +1,308 @@
+<!doctype html>
+<!--
+  DIREÇÃO A — "Voz" — tipográfica-crua
+  type:   display Anton (condensada, caixa alta) / body Archivo
+  ground: preto quase-puro quente #0B0A08 — sem gradiente, sem textura
+  accent: âmbar #E8A33D gasto em UM lugar (o CTA); um sublinhado fino no nav
+  motion: headline preenche a largura e cai por caractere em função do scroll
+          (pin 220vh); reveals por IntersectionObserver nas linhas da seção;
+          prefers-reduced-motion => tudo estático e visível
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MD para Áudio — Markdown vira voz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0B0A08;
+    --ink: #F2EEE6;
+    --muted: #8F887C;
+    --line: #26221C;
+    --accent: #E8A33D;
+    --accent-ink: #1A1206;
+    --display: 'Anton', 'Arial Narrow', sans-serif;
+    --body: 'Archivo', -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  /* ---------- hero (pin + sticky) ---------- */
+  .pin { height: 140vh; }
+  .hero {
+    position: sticky; top: 0;
+    height: 100vh;
+    display: flex; flex-direction: column;
+    padding: 0 40px;
+    overflow: hidden;
+  }
+  nav {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 28px 0 0;
+  }
+  .mark {
+    font-family: var(--display);
+    font-size: 18px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .links { display: flex; gap: 28px; }
+  .links a {
+    font-size: 13px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 3px;
+    border-bottom: 1px solid transparent;
+  }
+  .links a:hover, .links a:focus-visible { color: var(--ink); border-bottom-color: var(--accent); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .hero-mid { flex: 1 1 auto; display: flex; align-items: flex-end; }
+  .lede { max-width: 46ch; padding-bottom: 34px; }
+  .tagline {
+    font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 14px;
+  }
+  .lede p { color: var(--muted); font-size: 17px; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    text-transform: uppercase;
+    white-space: nowrap;
+    line-height: .94;
+    letter-spacing: .01em;
+    padding-bottom: 40px;
+    font-size: 100px; /* recalculado via JS para preencher a largura */
+  }
+  h1 .char { display: inline-block; white-space: pre; will-change: transform, opacity; transform-origin: 50% 100%; }
+  @keyframes rise {
+    from { transform: translateY(55%); opacity: 0; }
+    to   { transform: translateY(0);   opacity: 1; }
+  }
+  .js h1 .char { animation: rise .65s cubic-bezier(.2,.7,.2,1) both; }
+
+  .scrollhint {
+    position: absolute; right: 40px; bottom: 42vh;
+    font-size: 11px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--muted);
+    writing-mode: vertical-rl;
+  }
+
+  /* ---------- como funciona ---------- */
+  main { padding: 0 40px 120px; }
+  .sec-label {
+    font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--muted);
+    padding: 56px 0 20px;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 180px 1fr 1.4fr;
+    gap: 32px;
+    align-items: baseline;
+    border-top: 1px solid var(--line);
+    padding: 34px 0;
+  }
+  .row .num {
+    font-family: var(--display);
+    font-size: clamp(44px, 6vw, 84px);
+    line-height: 1;
+    color: var(--ink);
+  }
+  .row h2 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(20px, 2.2vw, 28px);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  .row p { color: var(--muted); max-width: 52ch; }
+  .row p b { color: var(--ink); font-weight: 500; }
+
+  .cta-band {
+    border-top: 1px solid var(--line);
+    margin-top: 8px;
+    padding: 72px 0 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 28px;
+  }
+  .btn {
+    display: inline-block;
+    font-family: var(--display);
+    font-size: 22px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    background: var(--accent);
+    color: var(--accent-ink);
+    padding: 20px 44px;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .cta-note { color: var(--muted); font-size: 14px; max-width: 34ch; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 26px 40px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    color: var(--muted); font-size: 13px;
+  }
+
+  /* ---------- reveals ---------- */
+  .js .reveal { opacity: 0; transform: translateY(26px); filter: blur(6px);
+    transition: opacity .7s ease, transform .7s ease, filter .7s ease; }
+  .js .reveal.in { opacity: 1; transform: none; filter: none; }
+
+  @media (max-width: 720px) {
+    .hero, footer { padding-left: 20px; padding-right: 20px; }
+    main { padding: 0 20px 90px; }
+    .links a:not(.go) { display: none; }
+    .row { grid-template-columns: 64px 1fr; grid-template-rows: auto auto; }
+    .row p { grid-column: 2; }
+    .scrollhint { display: none; }
+    h1 { padding-bottom: 28px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .js h1 .char { animation: none; }
+    .js .reveal { opacity: 1; transform: none; filter: none; transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="pin" id="pin">
+  <header class="hero">
+    <nav>
+      <a class="mark" href="#">MD→Áudio</a>
+      <div class="links">
+        <a href="#como">Como funciona</a>
+        <a class="go" href="/">Abrir o app</a>
+      </div>
+    </nav>
+    <div class="hero-mid">
+      <div class="lede">
+        <p class="tagline">Leitor de documentos · pt-BR</p>
+        <p>Envie um arquivo <strong>.md</strong> e ouça em português brasileiro.
+        Três vozes, velocidade sob controle e um player que
+        <strong>retoma de onde você parou</strong>.</p>
+      </div>
+    </div>
+    <h1 id="hl" aria-label="Markdown vira voz">MARKDOWN VIRA VOZ</h1>
+    <span class="scrollhint" aria-hidden="true">role</span>
+  </header>
+</div>
+
+<main>
+  <p class="sec-label" id="como">Como funciona</p>
+
+  <div class="row reveal">
+    <span class="num" aria-hidden="true">01</span>
+    <h2>Envie o .md</h2>
+    <p>Qualquer arquivo Markdown até 2 MB. Escreva <b>“pausa de 5 segundos”</b>
+    no texto e o áudio ganha silêncio exatamente ali.</p>
+  </div>
+
+  <div class="row reveal">
+    <span class="num" aria-hidden="true">02</span>
+    <h2>A voz é gerada</h2>
+    <p>TTS Kokoro num <b>Mac Studio pessoal</b> — a web só enfileira o pedido.
+    Escolha entre as vozes <b>Santa</b>, <b>Alex</b> ou <b>Dora</b> e ajuste a
+    fala de 0,8× a 1,3×, com prévia antes de gerar.</p>
+  </div>
+
+  <div class="row reveal">
+    <span class="num" aria-hidden="true">03</span>
+    <h2>Ouça em movimento</h2>
+    <p>Player com ±15s, reprodução até <b>2×</b> e retomada automática.
+    Salve o <b>.mp3</b> ou instale como app no celular.</p>
+  </div>
+
+  <div class="cta-band reveal">
+    <a class="btn" href="/">Abrir o app</a>
+    <p class="cta-note">Acesso pessoal, por token de dispositivo.</p>
+  </div>
+</main>
+
+<footer>
+  <span>MD para Áudio</span>
+  <span>Gerado num Mac Studio pessoal · Kokoro TTS</span>
+</footer>
+
+<script>
+(function () {
+  document.body.classList.add('js');
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var hl = document.getElementById('hl');
+  var pin = document.getElementById('pin');
+
+  // split em caracteres (entrada escalonada + queda no scroll)
+  var text = hl.textContent;
+  hl.textContent = '';
+  var chars = [];
+  for (var i = 0; i < text.length; i++) {
+    var s = document.createElement('span');
+    s.className = 'char';
+    s.textContent = text[i];
+    s.style.animationDelay = (i * 24) + 'ms';
+    // sem isto, o fill-mode 'both' da entrada sobrepõe os estilos inline do scroll
+    s.addEventListener('animationend', function (e) { e.target.style.animation = 'none'; }, { once: true });
+    hl.appendChild(s);
+    chars.push(s);
+  }
+
+  // headline preenche a largura da seção
+  function fit() {
+    hl.style.fontSize = '100px';
+    var w = hl.parentElement.clientWidth - 80; // padding do hero
+    if (matchMedia('(max-width: 720px)').matches) w = hl.parentElement.clientWidth - 40;
+    var tw = chars[chars.length - 1].getBoundingClientRect().right
+           - chars[0].getBoundingClientRect().left;
+    if (tw > 0) hl.style.fontSize = Math.max(30, Math.min(300, 100 * w / tw)) + 'px';
+  }
+  fit();
+  addEventListener('resize', fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+
+  if (reduced) return;
+
+  // queda por caractere em função do progresso do pin (reversível)
+  var n = chars.length, ticking = false;
+  function update() {
+    ticking = false;
+    var span = pin.offsetHeight - innerHeight;
+    var p = Math.min(1, Math.max(0, (scrollY - pin.offsetTop) / span));
+    for (var i = 0; i < n; i++) {
+      var start = (i / n) * 0.5;
+      var lp = Math.min(1, Math.max(0, (p - start) / 0.45));
+      var e = lp * lp;
+      chars[i].style.transform =
+        'translateY(' + (e * 110) + 'px) scale(' + (1 + e * 0.08) + ',' + (1 - e * 0.55) + ')';
+      chars[i].style.opacity = 1 - e;
+    }
+  }
+  addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; requestAnimationFrame(update); }
+  }, { passive: true });
+
+  // reveals
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+})();
+</script>
+</body>
+</html>

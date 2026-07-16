@@ -278,8 +278,27 @@ def apple_icon():
     return send_file(os.path.join(HERE, "apple-touch-icon.png"))
 
 
+# Landing (vitrine pública, direção "Lampião" — design/atelier/design-brief.md).
+# Arquivo separado para não inchar o app; se faltar, / volta ao comportamento antigo.
+try:
+    with open(os.path.join(HERE, "landing.html"), encoding="utf-8") as _f:
+        LANDING_HTML = _f.read()
+except OSError:
+    LANDING_HTML = None
+
+
 @app.get("/")
 def index():
+    # Quem já tem acesso (cookie md_auth, ?token= ou header) cai direto no app —
+    # inclui a PWA instalada e o fluxo de link com token. Visitante vê a vitrine.
+    if LANDING_HTML is None or _user_ok(request):
+        return Response(INDEX_HTML, mimetype="text/html")
+    return Response(LANDING_HTML, mimetype="text/html")
+
+
+@app.get("/app")
+def app_view():
+    # Rota fixa do app (destino do CTA da landing); o formulário de token vive aqui.
     return Response(INDEX_HTML, mimetype="text/html")
 
 

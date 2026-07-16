@@ -4,7 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
-COPY icon-192.png icon-512.png apple-touch-icon.png ./
+COPY icon-192.png icon-512.png apple-touch-icon.png landing.html ./
 
 ENV PORT=8000
 EXPOSE 8000

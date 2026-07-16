@@ -1,0 +1,300 @@
+<!doctype html>
+<!--
+  DIREÇÃO C — "Manuscrito" (editorial-papel, estruturada)
+  type:   display Instrument Serif (editorial, itálico pontual) / body Instrument Sans
+          / dados e markdown em Fragment Mono
+  ground: creme #F5EFE4 (o tema claro já existente do app) com tinta #2A2320 —
+          papel escolhido porque o assunto É documento, não por hábito editorial
+  accent: âmbar queimado #B4741A (token claro do app) no CTA e nos destaques
+  motion: fio de progresso de leitura no topo (função do scroll, reversível);
+          reveals discretos por IntersectionObserver;
+          prefers-reduced-motion => sem fio animado, tudo visível
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MD para Áudio — escreva em Markdown, ouça em português</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500&family=Fragment+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F5EFE4;
+    --ink: #2A2320;
+    --muted: #6B6152;
+    --line: #D9CDB8;
+    --line-soft: #E6DBC8;
+    --accent: #B4741A;
+    --accent-ink: #FFF8EC;
+    --field: #FBF7EF;
+    --display: 'Instrument Serif', Georgia, serif;
+    --body: 'Instrument Sans', -apple-system, sans-serif;
+    --mono: 'Fragment Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px; line-height: 1.55;
+  }
+  a { color: inherit; text-decoration: none; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  /* fio de progresso de leitura */
+  #fio { position: fixed; top: 0; left: 0; height: 2px; width: 0;
+    background: var(--accent); z-index: 10; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+
+  /* masthead editorial */
+  .mast {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 26px 0 14px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .mast .mark { font-family: var(--display); font-size: 24px; }
+  .mast .meta { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .mast a.go { font-family: var(--body); font-size: 14px; font-weight: 500;
+    border-bottom: 1px solid var(--accent); padding-bottom: 1px; }
+  .mast-right { display: flex; gap: 24px; align-items: baseline; }
+
+  header.hero { padding: 84px 0 40px; }
+  h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(42px, 6vw, 82px);
+    line-height: 1.04;
+    max-width: 18ch;
+    text-wrap: balance;
+    letter-spacing: -.01em;
+  }
+  h1 em { font-style: italic; color: var(--accent); }
+  .sub { color: var(--muted); font-size: 18px; max-width: 56ch; margin-top: 22px; }
+  .sub b { color: var(--ink); font-weight: 500; }
+  .actions { display: flex; align-items: baseline; gap: 24px; margin-top: 34px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block;
+    background: var(--accent); color: var(--accent-ink);
+    font-weight: 500; font-size: 16px;
+    padding: 14px 32px;
+  }
+  .btn:hover { filter: brightness(1.06); }
+  .note { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+
+  /* demonstração documento -> áudio */
+  .demo { border-top: 1px solid var(--ink); padding: 26px 0 0; margin-top: 56px; }
+  .demo-label {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 22px;
+  }
+  .demo-grid {
+    display: grid;
+    grid-template-columns: 1fr 56px 1fr;
+    gap: 24px;
+    align-items: stretch;
+  }
+  .doc {
+    font-family: var(--mono); font-size: 13.5px; line-height: 1.8;
+    background: var(--field);
+    border: 1px solid var(--line);
+    padding: 24px 26px;
+    color: var(--ink);
+    overflow-x: auto;
+  }
+  .doc .dim { color: var(--muted); }
+  .doc .cmd { color: var(--accent); }
+  .doc-name { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 10px 2px 0; }
+  .flow {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--muted);
+  }
+  .flow svg { display: block; }
+  .listen {
+    border: 1px solid var(--line);
+    background: var(--field);
+    padding: 24px 26px;
+    display: flex; flex-direction: column; justify-content: center; gap: 18px;
+  }
+  .listen .title { font-family: var(--display); font-size: 26px; }
+  .listen .voicel { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .bar { height: 4px; background: var(--line-soft); position: relative; }
+  .bar i { position: absolute; inset: 0 62% 0 0; background: var(--accent); }
+  .pctl { display: flex; gap: 10px; flex-wrap: wrap; }
+  .pctl span {
+    font-family: var(--mono); font-size: 12.5px;
+    border: 1px solid var(--line);
+    padding: 7px 12px; color: var(--ink); background: var(--paper);
+  }
+  .listen .hint { font-size: 13.5px; color: var(--muted); }
+
+  /* índice de recursos, margem numerada */
+  section.idx { padding: 96px 0 20px; }
+  .idx h2 { font-family: var(--display); font-weight: 400; font-size: clamp(30px, 3.6vw, 46px); margin-bottom: 12px; }
+  .idx h2 em { font-style: italic; }
+  .item {
+    display: grid; grid-template-columns: 88px 260px 1fr; gap: 24px;
+    border-top: 1px solid var(--line);
+    padding: 26px 0; align-items: baseline;
+  }
+  .item .n { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+  .item h3 { font-family: var(--display); font-weight: 400; font-size: 24px; }
+  .item p { color: var(--muted); max-width: 58ch; }
+  .item p b { color: var(--ink); font-weight: 500; }
+
+  footer {
+    margin-top: 80px;
+    border-top: 2px solid var(--ink);
+    padding: 22px 0 40px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  }
+
+  .js .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+  .js .reveal.in { opacity: 1; transform: none; }
+
+  @media (max-width: 860px) {
+    .wrap { padding: 0 22px; }
+    header.hero { padding: 56px 0 30px; }
+    .demo-grid { grid-template-columns: 1fr; }
+    .flow { transform: rotate(90deg); padding: 2px 0; }
+    .item { grid-template-columns: 56px 1fr; }
+    .item p { grid-column: 2; }
+    .mast .meta { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    #fio { display: none; }
+    .js .reveal { opacity: 1; transform: none; transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="fio" aria-hidden="true"></div>
+
+<div class="wrap">
+  <div class="mast">
+    <a class="mark" href="#">MD para Áudio</a>
+    <div class="mast-right">
+      <span class="meta">documento → voz · pt-BR</span>
+      <a class="go" href="/">Abrir o app</a>
+    </div>
+  </div>
+
+  <header class="hero">
+    <h1>Escreva em Markdown. <em>Ouça</em> em português.</h1>
+    <p class="sub">Todo documento <b>.md</b> pode virar um <b>.mp3</b> em
+    português brasileiro — para ouvir no trajeto, na caminhada, longe da tela.
+    Gerado num Mac Studio pessoal, com voz e ritmo à sua escolha.</p>
+    <div class="actions">
+      <a class="btn" href="/">Abrir o app</a>
+      <span class="note">acesso pessoal por token</span>
+    </div>
+
+    <div class="demo reveal">
+      <p class="demo-label">O documento e o que você ouve</p>
+      <div class="demo-grid">
+        <div>
+          <div class="doc" aria-label="Exemplo de arquivo Markdown">
+<span class="dim"># </span>Capítulo 3 — O retorno<br>
+<br>
+A carta chegou numa terça-feira,<br>
+sem remetente e sem pressa.<br>
+<br>
+<span class="cmd">pausa de 5 segundos</span><br>
+<br>
+<span class="dim">## </span>A leitura<br>
+Ninguém abriu a carta naquele dia.
+          </div>
+          <p class="doc-name">capitulo-3.md · até 2 MB</p>
+        </div>
+        <div class="flow" aria-hidden="true">
+          <svg width="40" height="16" viewBox="0 0 40 16" fill="none">
+            <path d="M0 8 H34 M28 2 L36 8 L28 14" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <div>
+          <div class="listen">
+            <div>
+              <p class="title">Capítulo 3 — O retorno</p>
+              <p class="voicel">voz Santa · 1,0× · mp3</p>
+            </div>
+            <div class="bar" aria-hidden="true"><i></i></div>
+            <div class="pctl" aria-hidden="true">
+              <span>« 15s</span><span>1,25×</span><span>15s »</span><span>salvar</span>
+            </div>
+            <p class="hint">A “pausa de 5 segundos” do texto vira silêncio real.
+            O player retoma de onde você parou.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="idx">
+    <h2>O que vem no <em>índice</em></h2>
+
+    <div class="item reveal">
+      <span class="n">§ 1</span>
+      <h3>Três vozes</h3>
+      <p><b>Santa</b> e <b>Alex</b>, masculinas; <b>Dora</b>, feminina.
+      Prévia de cada uma no app, antes de gerar o áudio completo.</p>
+    </div>
+
+    <div class="item reveal">
+      <span class="n">§ 2</span>
+      <h3>Ritmo à sua escolha</h3>
+      <p>Fala de <b>0,8× a 1,3×</b> na geração; na escuta, player com
+      <b>±15s</b> e reprodução até <b>2×</b>.</p>
+    </div>
+
+    <div class="item reveal">
+      <span class="n">§ 3</span>
+      <h3>Retomada e histórico</h3>
+      <p>O áudio continua de onde você parou. O histórico fica no aparelho —
+      fixe, renomeie, busque — e o <b>.mp3</b> é seu para salvar.</p>
+    </div>
+
+    <div class="item reveal">
+      <span class="n">§ 4</span>
+      <h3>Instala como app</h3>
+      <p>“Meus Áudios” na tela inicial do celular, direto do navegador.
+      Acesso pessoal por token de dispositivo.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>MD para Áudio · Meus Áudios</span>
+    <span>Mac Studio pessoal · Kokoro TTS</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  document.body.classList.add('js');
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) return;
+
+  // fio de leitura — função pura da posição de scroll
+  var fio = document.getElementById('fio');
+  var ticking = false;
+  function update() {
+    ticking = false;
+    var max = document.documentElement.scrollHeight - innerHeight;
+    fio.style.width = (max > 0 ? (scrollY / max) * 100 : 0) + '%';
+  }
+  update();
+  addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; requestAnimationFrame(update); }
+  }, { passive: true });
+
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.15 });
+  document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+})();
+</script>
+</body>
+</html>
