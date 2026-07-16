@@ -1,8 +1,10 @@
-# Design Brief (draft) — Landing "MD para Áudio"
+# Design Brief — Landing "MD para Áudio"
 
-> Rascunho inferido do repositório pelo Atelier (concierge, fase 1 — PIP-661).
+> Inferido do repositório pelo Atelier (concierge — PIP-661) e FECHADO em
+> 2026-07-16 com as decisões do fundador: **Direção B "Lampião"** e **CTA único
+> "Abrir o app"** (vitrine pessoal, sem caminho "pedir acesso").
 > Nada aqui inventa clientes, métricas ou validação: o produto hoje é uma
-> ferramenta pessoal com acesso por token. As perguntas abertas estão no fim.
+> ferramenta pessoal com acesso por token.
 
 ```yaml
 project: md-audio — landing page pública do produto
@@ -13,12 +15,12 @@ audience: >
   em Markdown (anotações, capítulos, estudos) e querem ouvi-los em movimento
   (trajeto, caminhada, tarefas domésticas). Uso hoje é pessoal (token);
   mobile-primeiro — o app atual é PWA instalável.
-primary_action: Enviar um arquivo .md e ouvir — CTA único "Abrir o app" (rota /)
-direction: A ESCOLHER — três direções renderizadas em design/atelier/direction-{a,b,c}.html
-type:
-  direction-a: { display: Anton, body: Archivo }
-  direction-b: { display: Fraunces, body: Instrument Sans }
-  direction-c: { display: Instrument Serif, body: Instrument Sans, data: Fragment Mono }
+primary_action: Enviar um arquivo .md e ouvir — CTA único "Abrir o app" (rota /app)
+direction: >
+  B "Lampião" (decisão do fundador, 2026-07-16) — atmosférica: herda o tema do
+  app, brilho de abajur, serifa expressiva, onda sonora desenhada pelo scroll.
+  Alternativas A e C permanecem como evidência em design/atelier/.
+type: { display: Fraunces, body: Instrument Sans }
 color:
   seeds-da-marca:  # tokens já existentes no app "Meus Áudios" (tema Lampião)
     ground-escuro: "#14110E"
@@ -56,20 +58,28 @@ Não existe landing: a rota / já é o formulário do app (card central 440px,
 tema "Lampião" claro/escuro, serifa de sistema Iowan Old Style, accent âmbar).
 Funcional e honesto, mas não apresenta o produto a quem chega de fora.
 
-## As três direções (reaja, não descreva)
+## As três direções (fase 1 — histórico)
 
 | | Direção | Type / Ground / Accent | Postura |
 |---|---|---|---|
 | A | **Tipográfica-crua** ("Voz") | Anton + Archivo / preto puro #0B0A08 / âmbar #E8A33D em um único ponto | Headline preenchendo a largura, queda de caracteres scroll-driven, lista numerada com réguas. Frieza tipográfica, zero decoração. |
-| B | **Atmosférica-lampião** ("Lampião") | Fraunces + Instrument Sans / marrom-negro #14110E / âmbar como luz | Herda o tema do app: brilho de abajur radial, serifa expressiva, forma de onda que se desenha com o scroll. Quente, noturna, íntima. |
+| B | **Atmosférica-lampião** ("Lampião") — **ESCOLHIDA** | Fraunces + Instrument Sans / marrom-negro #14110E / âmbar como luz | Herda o tema do app: brilho de abajur radial, serifa expressiva, forma de onda que se desenha com o scroll. Quente, noturna, íntima. |
 | C | **Editorial-papel** ("Manuscrito") | Instrument Serif + Fragment Mono / creme #F5EFE4 / âmbar queimado #B4741A | Metáfora literal documento→áudio: coluna de markdown mono à esquerda vira player à direita; grid com réguas, margens numeradas. Diurna, estruturada. |
 
 Cada arquivo declara type/ground/accent/motion num comentário HTML no topo.
 
-## Perguntas de gosto para o fundador (as únicas decisões pendentes)
+## Decisões fechadas (fundador, 2026-07-16)
 
-1. **Qual direção — ou qual mistura?** (ex.: "B com a tipografia da A"). A landing
-   deve continuar a identidade "Lampião" do app (B/C herdam; A rompe de propósito)?
-2. **A landing é vitrine pessoal ou porta de entrada?** Hoje o acesso é por token.
-   O CTA único "Abrir o app" está certo, ou você quer um caminho "pedir acesso"
-   (mailto/WhatsApp)? Isso muda a força do CTA nas três direções.
+1. **Direção B "Lampião"** — a landing continua a identidade do app.
+2. **CTA único "Abrir o app"** — vitrine pessoal; sem caminho "pedir acesso".
+
+## Entrega final (fase 2)
+
+- Página: `landing.html` na raiz do repo, servida pelo mesmo Flask (Railway).
+- Integração: `/` mostra o app para quem tem acesso (cookie `md_auth`,
+  `?token=` ou header) e a landing para visitantes; `/app` sempre mostra o app
+  (destino do CTA). Sem mudança para a PWA instalada nem para o fluxo de token.
+- Seções: hero (onda scroll-driven) → Do arquivo ao áudio (fila→Mac Studio→mp3)
+  → Três vozes, o seu ritmo → Feito para o trajeto (retomada/histórico/PWA/mp3)
+  → Um serviço pessoal (nota honesta de token) → rodapé.
+- Evidência visual: `design/atelier/screenshots/final/`.
