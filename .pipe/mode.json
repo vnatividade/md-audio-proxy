@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "0.1.0",
+  "mode": "exploration",
+  "reason": "Pre-production discovery: landing/UI work via Atelier pilot (PIP-661); no real users or customer data in this repository.",
+  "activatedBy": "Vitor Natividade",
+  "activatedAt": "2026-07-16",
+  "notes": "Activated by explicit founder instruction in the Claude Code session of 2026-07-16 ('pode criar o mode.json dentro do md-audio'), recorded here and in PIP-661 per execution/operating-modes.md."
+}
