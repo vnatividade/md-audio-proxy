@@ -372,6 +372,7 @@ INDEX_HTML = """<!doctype html>
   .seg button { width:auto; margin:0; padding:13px 14px; background:transparent; color:var(--muted);
     font-size:13px; font-weight:600; border-radius:0; min-height:44px; }
   .seg button.on { background:var(--accent); color:var(--accent-ink); }
+  .previewmeta { font-size:13px; color:var(--accent); font-weight:600; margin:0 0 8px; }
   .status { margin-top:18px; font-size:14px; min-height:24px; display:flex;
     align-items:center; gap:9px; color:var(--muted); }
   .spinner { width:18px; height:18px; border:3px solid var(--border);
@@ -454,6 +455,14 @@ INDEX_HTML = """<!doctype html>
       </div>
       <textarea id="pastetext" rows="6"
         placeholder="Cole aqui uma resposta de IA, anotação ou markdown — sem precisar salvar arquivo antes."></textarea>
+      <div id="previewToggleWrap" class="hidden">
+        <button type="button" id="previewToggle" class="secondary">Ver prévia do texto falado</button>
+      </div>
+      <div id="previewPanel" class="hidden">
+        <label for="previewText">Prévia — é isto que será enviado, edite se quiser</label>
+        <div class="previewmeta" id="previewMeta"></div>
+        <textarea id="previewText" rows="8"></textarea>
+      </div>
       <label for="file">Arquivo Markdown (.md)</label>
       <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain">
       <button id="btn" type="submit">Gerar áudio</button>
@@ -772,6 +781,11 @@ const titleEl = document.getElementById('title');
 const fileEl = document.getElementById('file');
 const pasteEl = document.getElementById('pastetext');
 const pasteModeSeg = document.getElementById('pastemodeseg');
+const previewToggleWrap = document.getElementById('previewToggleWrap');
+const previewToggle = document.getElementById('previewToggle');
+const previewPanel = document.getElementById('previewPanel');
+const previewMeta = document.getElementById('previewMeta');
+const previewTextEl = document.getElementById('previewText');
 const voiceEl = document.getElementById('voice');
 const speedEl = document.getElementById('speed');
 const speedValEl = document.getElementById('speedval');
@@ -783,6 +797,10 @@ const MAX_PASTE_BYTES = 2 * 1024 * 1024;
 let authed = false;
 let pasteMode = 'text';
 let pasteModeTouched = false;
+let previewOpen = false;
+let previewEdited = false;
+let previewDebounce = null;
+const MDA_CHARS_PER_MIN_1X = 825; // ~150 palavras/min * ~5.5 chars/palavra, ponto de partida pra afinar ouvindo
 
 // auto-detecção por densidade de sintaxe markdown (cabeçalho, lista, cerca,
 // ênfase, citação) — o override manual do usuário sempre vence (ver abaixo)
@@ -803,13 +821,92 @@ function applyPasteMode(m) {
   pasteMode = m;
   [...pasteModeSeg.children].forEach(b => b.classList.toggle('on', b.dataset.mode === m));
 }
+
+// duração é estimativa deliberada: não conhece o ritmo real do Kokoro, só
+// soma as pausas explícitas (essas sim exatas) com uma taxa de fala aproximada
+function mdaEstimateSeconds(text, speed) {
+  const re = /\\[?\\s*(?:pausa|pause)(?:\\s+de)?\\s+(\\d+(?:[.,]\\d+)?)\\s*(minutos?|mins?|min|m|segundos?|segs?|seg|s)\\b\\.?\\s*\\]?/gi;
+  let pauseSeconds = 0, spokenLen = text.length, m;
+  while ((m = re.exec(text))) {
+    const num = parseFloat(m[1].replace(',', '.'));
+    const secs = m[2].toLowerCase().startsWith('m') ? num * 60 : num;
+    pauseSeconds += Math.max(0.1, Math.min(secs, 300));
+    spokenLen -= m[0].length;
+  }
+  const sp = Math.max(0.5, Math.min(speed || 1, 2.0));
+  return Math.max(0, Math.round(pauseSeconds + (Math.max(0, spokenLen) / MDA_CHARS_PER_MIN_1X) * 60 / sp));
+}
+function mdaFmtDuration(totalSeconds) {
+  const mm = Math.floor(totalSeconds / 60), ss = totalSeconds % 60;
+  return mm > 0 ? (mm + ' min ' + ss + ' s') : (ss + ' s');
+}
+// conta os marcadores presentes no texto ATUAL da prévia (não num estado à
+// parte) — assim o resumo bate mesmo depois de o usuário editar à mão
+function mdaCountMarkersInText(text) {
+  const defs = [
+    ['código', /\\[código omitido\\]/g],
+    ['link', /\\[link omitido\\]/g],
+    ['imagem', /\\[imagem omitida\\]/g],
+    ['tabela', /\\[tabela omitida\\]/g],
+  ];
+  const counts = {};
+  for (const [label, re] of defs) {
+    const n = (text.match(re) || []).length;
+    if (n) counts[label] = n;
+  }
+  return counts;
+}
+function renderPreviewMeta(text, speed) {
+  const counts = mdaCountMarkersInText(text);
+  const bits = [];
+  const entries = Object.entries(counts);
+  if (entries.length) {
+    bits.push(entries.map(([k, n]) => n + ' ' + k + (n > 1 ? 's' : '') + ' omitido' + (n > 1 && k !== 'tabela' ? 's' : '')).join(', '));
+  } else {
+    bits.push('Nenhuma omissão');
+  }
+  bits.push('duração estimada: ' + mdaFmtDuration(mdaEstimateSeconds(text, speed)) + ' (estimativa)');
+  previewMeta.textContent = bits.join(' · ');
+}
+// recalcula a transformação; force=true ignora edição manual do usuário no
+// preview (troca de modo invalida a edição anterior, feita sob o modo velho)
+function recomputeAll(force) {
+  if (!pasteEl.value.trim()) {
+    previewToggleWrap.classList.add('hidden');
+    previewPanel.classList.add('hidden');
+    previewOpen = false;
+    return;
+  }
+  previewToggleWrap.classList.remove('hidden');
+  if (previewEdited && !force) return;
+  const result = mdaudioTransform(pasteEl.value, pasteMode);
+  if (!titleTouched && result.title) titleEl.value = result.title;
+  if (previewOpen || force) {
+    previewTextEl.value = result.speakable;
+    renderPreviewMeta(result.speakable, parseFloat(speedEl.value));
+    if (force) previewEdited = false;
+  }
+}
+previewToggle.addEventListener('click', () => {
+  previewOpen = !previewOpen;
+  previewPanel.classList.toggle('hidden', !previewOpen);
+  previewToggle.textContent = previewOpen ? 'Ocultar prévia' : 'Ver prévia do texto falado';
+  if (previewOpen) recomputeAll(true);
+});
+previewTextEl.addEventListener('input', () => {
+  previewEdited = true;
+  renderPreviewMeta(previewTextEl.value, parseFloat(speedEl.value));
+});
 pasteModeSeg.addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   pasteModeTouched = true;
   applyPasteMode(b.dataset.mode);
+  recomputeAll(true);
 });
 pasteEl.addEventListener('input', () => {
   if (!pasteModeTouched) applyPasteMode(detectPasteMode(pasteEl.value));
+  clearTimeout(previewDebounce);
+  previewDebounce = setTimeout(() => recomputeAll(false), 400);
 });
 
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -832,7 +929,10 @@ function loadPrefs(){
 function savePrefs(){
   try { localStorage.setItem('mdaudio_prefs', JSON.stringify({ voice: voiceEl.value, speed: speedEl.value })); } catch(e){}
 }
-speedEl.addEventListener('input', () => { speedValEl.textContent = fmtSpeed(parseFloat(speedEl.value)); });
+speedEl.addEventListener('input', () => {
+  speedValEl.textContent = fmtSpeed(parseFloat(speedEl.value));
+  if (previewOpen) renderPreviewMeta(previewTextEl.value, parseFloat(speedEl.value));
+});
 
 const themeSeg = document.getElementById('themeseg');
 function applyTheme(t){
@@ -1056,8 +1156,29 @@ f.addEventListener('submit', async (e) => {
     setStatus('Cole um texto ou escolha um arquivo .md.', { err:true });
     return;
   }
-  if (usingPaste && new TextEncoder().encode(pasted).length > MAX_PASTE_BYTES) {
-    setStatus('Texto colado passa de 2 MB — reduza antes de gerar.', { err:true });
+
+  // texto colado sempre passa pela transformação — o preview, quando aberto,
+  // é a fonte da verdade (edição do usuário vence); se nunca foi aberto, a
+  // transformação roda aqui mesmo, silenciosamente, do mesmo jeito
+  let sendText = pasted;
+  if (usingPaste) {
+    if (previewOpen) {
+      sendText = previewTextEl.value;
+      if (!sendText.trim()) {
+        setStatus('A prévia está vazia — edite o texto antes de gerar.', { err:true });
+        return;
+      }
+    } else {
+      const result = mdaudioTransform(pasted, pasteMode);
+      if (result.empty) {
+        setStatus('O texto colado não sobra com conteúdo falável depois da limpeza — abra a prévia e edite antes de gerar.', { err:true });
+        return;
+      }
+      sendText = result.speakable;
+    }
+  }
+  if (usingPaste && new TextEncoder().encode(sendText).length > MAX_PASTE_BYTES) {
+    setStatus('Texto passa de 2 MB depois da transformação — reduza antes de gerar.', { err:true });
     return;
   }
 
@@ -1067,7 +1188,7 @@ f.addEventListener('submit', async (e) => {
   setBusy(true); setStatus('Enviando…', { loading:true });
   try {
     const data = new FormData(f);
-    if (usingPaste) data.set('file', new File([pasted], fname, { type:'text/markdown' }));
+    if (usingPaste) data.set('file', new File([sendText], fname, { type:'text/markdown' }));
     const r = await fetch('/synthesize', { method:'POST', body:data, credentials:'same-origin' });
     if (!r.ok) {
       let msg = 'Erro ' + r.status; try { const j = await r.json(); if (j && j.error) msg = j.error; } catch(e){}
