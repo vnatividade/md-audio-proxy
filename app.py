@@ -353,9 +353,10 @@ INDEX_HTML = """<!doctype html>
     margin:0 0 5px; }
   p.sub { margin:0 0 16px; color:var(--muted); font-size:13.5px; line-height:1.5; }
   label { display:block; font-size:13px; color:var(--muted); margin:16px 0 6px; }
-  input[type=text], input[type=password], input[type=file], select { width:100%; padding:12px;
+  input[type=text], input[type=password], input[type=file], select, textarea { width:100%; padding:12px;
     background:var(--field); border:1px solid var(--border); border-radius:10px;
     color:var(--text); font-size:15px; }
+  textarea { font-family:inherit; resize:vertical; min-height:120px; line-height:1.45; }
   input[type=range] { width:100%; accent-color:var(--accent); margin-top:4px; }
   .rangeval { color:var(--accent); font-weight:600; }
   button { width:100%; margin-top:22px; padding:14px; border:0; border-radius:12px;
@@ -368,8 +369,8 @@ INDEX_HTML = """<!doctype html>
   .settings { display:flex; align-items:center; gap:10px; margin:0 0 8px; }
   .seg { display:inline-flex; background:var(--field); border:1px solid var(--border);
     border-radius:10px; overflow:hidden; }
-  .seg button { width:auto; margin:0; padding:7px 13px; background:transparent; color:var(--muted);
-    font-size:13px; font-weight:600; border-radius:0; }
+  .seg button { width:auto; margin:0; padding:13px 14px; background:transparent; color:var(--muted);
+    font-size:13px; font-weight:600; border-radius:0; min-height:44px; }
   .seg button.on { background:var(--accent); color:var(--accent-ink); }
   .status { margin-top:18px; font-size:14px; min-height:24px; display:flex;
     align-items:center; gap:9px; color:var(--muted); }
@@ -413,8 +414,8 @@ INDEX_HTML = """<!doctype html>
 <body>
   <div class="card">
     <h1>Meus Áudios</h1>
-    <p class="sub">Suba um arquivo .md e ouça em PT-BR.<br>
-      Dica: escreva <b>pausa de 5 segundos</b> (ou <b>pausa de 1 minuto</b>) no texto pra inserir silêncio.<br>
+    <p class="sub">Cole um texto ou suba um arquivo .md, e ouça em PT-BR.<br>
+      Dica: escreva <b>pausa de 5 segundos</b> (ou <b>pausa de 1 minuto</b>) no texto pra inserir silêncio — vale pro que você cola também.<br>
       O áudio é gerado no servidor pessoal (Mac Studio).</p>
     <div class="settings">
       <div class="seg" id="themeseg">
@@ -434,7 +435,7 @@ INDEX_HTML = """<!doctype html>
         </div>
       </div>
       <label for="title">Título (opcional)</label>
-      <input type="text" id="title" enterkeyhint="done" placeholder="ex: Capítulo 3 — se vazio, usa o nome do arquivo">
+      <input type="text" id="title" enterkeyhint="done" placeholder="ex: Capítulo 3 — se vazio, usa o nome do arquivo ou &quot;Texto colado&quot;">
       <label for="voice">Voz</label>
       <select id="voice" name="voice">
         <option value="pm_santa">Masculina — Santa</option>
@@ -444,8 +445,17 @@ INDEX_HTML = """<!doctype html>
       <label for="speed">Velocidade da fala: <span class="rangeval" id="speedval">1,0×</span></label>
       <input type="range" id="speed" name="speed" min="0.8" max="1.3" step="0.05" value="1.0">
       <button type="button" id="preview" class="secondary">Ouvir prévia da voz</button>
+      <label for="pastetext">Colar texto (opcional se enviar arquivo)</label>
+      <div class="settings">
+        <div class="seg" id="pastemodeseg">
+          <button type="button" data-mode="text" class="on">Texto cru</button>
+          <button type="button" data-mode="markdown">Markdown cru</button>
+        </div>
+      </div>
+      <textarea id="pastetext" rows="6"
+        placeholder="Cole aqui uma resposta de IA, anotação ou markdown — sem precisar salvar arquivo antes."></textarea>
       <label for="file">Arquivo Markdown (.md)</label>
-      <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain" required>
+      <input type="file" id="file" name="file" accept=".md,.markdown,text/markdown,text/plain">
       <button id="btn" type="submit">Gerar áudio</button>
     </form>
     <div class="status" id="status"><span class="spinner" id="spin"></span><span id="stxt"></span></div>
@@ -760,6 +770,8 @@ const histSearchEl = document.getElementById('histsearch');
 const tokenEl = document.getElementById('token');
 const titleEl = document.getElementById('title');
 const fileEl = document.getElementById('file');
+const pasteEl = document.getElementById('pastetext');
+const pasteModeSeg = document.getElementById('pastemodeseg');
 const voiceEl = document.getElementById('voice');
 const speedEl = document.getElementById('speed');
 const speedValEl = document.getElementById('speedval');
@@ -767,7 +779,38 @@ const tokenWrap = document.getElementById('tokenwrap');
 const conn = document.getElementById('conn');
 const JOB_KEY = 'mdaudio_job';
 const TOK_KEY = 'mdaudio_token';
+const MAX_PASTE_BYTES = 2 * 1024 * 1024;
 let authed = false;
+let pasteMode = 'text';
+let pasteModeTouched = false;
+
+// auto-detecção por densidade de sintaxe markdown (cabeçalho, lista, cerca,
+// ênfase, citação) — o override manual do usuário sempre vence (ver abaixo)
+function detectPasteMode(text) {
+  const lines = text.split('\\n').filter(l => l.trim());
+  if (!lines.length) return 'text';
+  let hits = 0;
+  for (const l of lines) {
+    if (
+      /^#{1,6}\\s/.test(l) || /^\\s*(?:[-*+]|\\d+\\.)\\s+/.test(l) ||
+      /^\\s{0,3}```/.test(l) || /^\\s{0,3}>/.test(l) ||
+      /(\\*\\*|__)[^*_]+\\1/.test(l) || /\\[[^\\]]*\\]\\([^)]*\\)/.test(l)
+    ) hits++;
+  }
+  return (hits / lines.length) >= 0.15 ? 'markdown' : 'text';
+}
+function applyPasteMode(m) {
+  pasteMode = m;
+  [...pasteModeSeg.children].forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+}
+pasteModeSeg.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  pasteModeTouched = true;
+  applyPasteMode(b.dataset.mode);
+});
+pasteEl.addEventListener('input', () => {
+  if (!pasteModeTouched) applyPasteMode(detectPasteMode(pasteEl.value));
+});
 
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function setStatus(msg, opts){
@@ -1005,12 +1048,26 @@ f.addEventListener('submit', async (e) => {
   player.innerHTML = '';
   const token = tokenEl.value;
   if (token) { try { localStorage.setItem(TOK_KEY, token); } catch(e){} }
-  const fname = (fileEl.files[0] && fileEl.files[0].name) || 'audio';
-  const title = (titleEl.value.trim()) || fname.replace(/\\.[^.]+$/, '');
+
+  const pasted = pasteEl.value;
+  const usingPaste = pasted.trim().length > 0; // colar sempre ganha do arquivo, se os dois vierem preenchidos
+  const hasFile = !!fileEl.files[0];
+  if (!usingPaste && !hasFile) {
+    setStatus('Cole um texto ou escolha um arquivo .md.', { err:true });
+    return;
+  }
+  if (usingPaste && new TextEncoder().encode(pasted).length > MAX_PASTE_BYTES) {
+    setStatus('Texto colado passa de 2 MB — reduza antes de gerar.', { err:true });
+    return;
+  }
+
+  const fname = usingPaste ? 'colado.md' : ((fileEl.files[0] && fileEl.files[0].name) || 'audio');
+  const title = (titleEl.value.trim()) || (usingPaste ? 'Texto colado' : fname.replace(/\\.[^.]+$/, ''));
   savePrefs();
   setBusy(true); setStatus('Enviando…', { loading:true });
   try {
     const data = new FormData(f);
+    if (usingPaste) data.set('file', new File([pasted], fname, { type:'text/markdown' }));
     const r = await fetch('/synthesize', { method:'POST', body:data, credentials:'same-origin' });
     if (!r.ok) {
       let msg = 'Erro ' + r.status; try { const j = await r.json(); if (j && j.error) msg = j.error; } catch(e){}
