@@ -1,0 +1,8 @@
+{
+  "name": "md-audio-proxy",
+  "private": true,
+  "description": "Fachada Railway do md-audio. Sem build step — este package.json existe só para documentar o comando de teste da transformação (PIP-722).",
+  "scripts": {
+    "test": "node --test"
+  }
+}
